@@ -194,6 +194,10 @@ namespace PartLock.E2E
                 var push = Git(_bobRoot, "push");
                 Require(push.Code != 0,
                     "bob's push must fail while alice holds the lock (lfs.locksverify=true)");
+                Require((push.Error + push.Output).ToLowerInvariant().Contains("lock"),
+                    "push failed, but not because of the lock: " + push.Error.Trim());
+                Require(GitRunner.FriendlyError(push.Error).Contains("someone else has checked out"),
+                    "friendly message for a locked push was: " + GitRunner.FriendlyError(push.Error));
 
                 GitOk(_bobRoot, "reset --hard origin/main");
             });
@@ -401,6 +405,28 @@ namespace PartLock.E2E
                 Require(spar.Lock == null, "bob should see no lock after alice's undo");
                 Require(spar.State == FileState.Available,
                     "bob should see Available, saw " + spar.State);
+            });
+
+            await Step("m. Get Latest refuses to clobber an un-checked-out edit that someone superseded", async () =>
+            {
+                string bobSpar = BobFile(Spar);
+                File.SetAttributes(bobSpar, FileAttributes.Normal);
+                AppendBytes(bobSpar, 99);
+                byte[] bobBytes = File.ReadAllBytes(bobSpar);
+
+                await _alice.CheckOutAsync(new[] { Spar });
+                AppendBytes(Path.Combine(_aliceRoot, Spar), 500);
+                await _alice.CheckInAsync(new[] { Spar }, "Spar fillet", false);
+
+                await ExpectVaultException(() => _bob.GetLatestAsync(), "GetLatest over a superseded local edit");
+                Require(SameBytes(File.ReadAllBytes(bobSpar), bobBytes), "bob's local edit must be left untouched");
+
+                await _bob.UndoCheckOutAsync(new[] { Spar });
+                await _bob.GetLatestAsync();
+                Require(SameBytes(bobSpar, Path.Combine(_aliceRoot, Spar)), "after undo + get latest bob has alice's spar");
+                var files = await _bob.GetFilesAsync(true);
+                Require(Find(files, Spar).State == FileState.Available, "spar should be Available, was " + Find(files, Spar).State);
+                Require(IsReadOnly(bobSpar), "spar should be read-only again after undo");
             });
 
             await Step("l. history is newest first and mentions the check-in", async () =>
