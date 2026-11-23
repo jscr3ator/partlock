@@ -13,13 +13,40 @@ namespace PartLock.Core
     {
         public async Task GetLatestAsync(CancellationToken ct = default(CancellationToken))
         {
+            await EnsureRepoReadyAsync(ct).ConfigureAwait(false);
             await EnsureUpstreamAsync(ct).ConfigureAwait(false);
 
+            // Binary CAD files can't be merged. If you edited a file that someone else has since
+            // checked in a newer version of, updating would leave a broken half-merged file, so stop
+            // and say exactly which files, before touching anything.
+            LogLine("Checking for conflicts with your edits…");
+            await GitAsync(new string[] { "fetch", "--quiet" }, ct).ConfigureAwait(false);
+            await RefreshBehindRemoteAsync(ct).ConfigureAwait(false);
+            GitResult status = await GitAsync(
+                new string[] { "status", "--porcelain=v1", "-z", "--untracked-files=no" }, ct).ConfigureAwait(false);
+            HashSet<string> untrackedNone = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> deleted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ParseStatus(status.StdOut, untrackedNone, changed, deleted);
+            changed.UnionWith(deleted);
+
+            List<string> clashes = new List<string>();
+            foreach (string path in changed)
+                if (_behindRemote.Contains(path)) clashes.Add(path);
+            if (clashes.Count > 0)
+            {
+                clashes.Sort(StringComparer.OrdinalIgnoreCase);
+                throw new VaultException(
+                    "You changed " + string.Join(", ", clashes.ToArray()) + " on this computer, but someone has " +
+                    "checked in a newer version. Save a copy of your file somewhere else if you need it, " +
+                    "then use Undo Check Out on it and Get Latest again.");
+            }
+
             LogLine("Getting everyone's latest changes…");
-            await GitAsync(new string[] { "pull", "--rebase", "--autostash" }, ct).ConfigureAwait(false);
+            await GitAsync(new string[] { "pull", "--rebase", "--autostash" }, ct, null, true, 3600000).ConfigureAwait(false);
 
             LogLine("Downloading the latest CAD files…");
-            await GitAsync(new string[] { "lfs", "pull" }, ct).ConfigureAwait(false);
+            await GitAsync(new string[] { "lfs", "pull" }, ct, null, true, 3600000).ConfigureAwait(false);
 
             _behindRemote = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             LogLine("You're up to date.");
@@ -461,7 +488,7 @@ namespace PartLock.Core
         {
             try
             {
-                string fullPath = Path.Combine(RepoRoot, path);
+                string fullPath = FullPath(path);
                 if (!File.Exists(fullPath)) return;
 
                 FileAttributes attributes = File.GetAttributes(fullPath);

@@ -267,8 +267,9 @@ namespace PartLock.Core
             {
                 return null;
             }
-            catch (IOException)
+            catch (Exception)
             {
+                // Malformed JSON surfaces as XmlException/SerializationException/etc. depending on runtime.
                 return null;
             }
         }

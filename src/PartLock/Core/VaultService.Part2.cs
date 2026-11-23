@@ -1,6 +1,7 @@
 // PartLock - reading local status, lockable attributes and server locks into VaultFile rows.
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,6 +13,7 @@ namespace PartLock.Core
             CancellationToken ct = default(CancellationToken))
         {
             ct.ThrowIfCancellationRequested();
+            await EnsureRepoReadyAsync(ct).ConfigureAwait(false);
 
             if (fetchRemote)
             {
@@ -116,7 +118,36 @@ namespace PartLock.Core
                 return string.Compare(a.Path, b.Path, StringComparison.OrdinalIgnoreCase);
             });
 
+            EnforceReadOnly(files);
             return files;
+        }
+
+        /// <summary>
+        /// Safety net on top of Git LFS: a CAD file you haven't checked out is read-only on disk, so
+        /// SolidWorks opens it read-only and can't save over it. Files you have checked out are writable.
+        /// Files with local edits are left alone (we never interfere with unsaved work).
+        /// </summary>
+        private void EnforceReadOnly(List<VaultFile> files)
+        {
+            foreach (VaultFile file in files)
+            {
+                if (!file.IsLockable || !file.IsTracked || file.Modified || file.Deleted) continue;
+
+                bool shouldBeReadOnly = file.State != FileState.CheckedOutByMe;
+                string full = FullPath(file.Path);
+                try
+                {
+                    if (!File.Exists(full)) continue;
+                    FileAttributes attrs = File.GetAttributes(full);
+                    bool isReadOnly = (attrs & FileAttributes.ReadOnly) != 0;
+                    if (shouldBeReadOnly && !isReadOnly)
+                        File.SetAttributes(full, attrs | FileAttributes.ReadOnly);
+                    else if (!shouldBeReadOnly && isReadOnly)
+                        File.SetAttributes(full, attrs & ~FileAttributes.ReadOnly);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
         }
 
         // ---------------------------------------------------------------- server snapshot

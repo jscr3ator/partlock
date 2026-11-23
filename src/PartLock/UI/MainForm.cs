@@ -987,7 +987,7 @@ namespace PartLock.UI
             }
         }
 
-        private void SetBusy(bool busy, string status)
+        private void SetBusy(bool busy, string status = null)
         {
             _busy = busy;
             _progress.Visible = busy;

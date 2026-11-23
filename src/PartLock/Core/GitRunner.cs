@@ -245,6 +245,7 @@ namespace PartLock.Core
         {
             stderr = stderr ?? string.Empty;
             stdout = stdout ?? string.Empty;
+            stderr = Redact(stderr); stdout = Redact(stdout);
             if (stdout.Length == 0) return stderr.Trim();
             if (stderr.Length == 0) return stdout.Trim();
             return stderr.TrimEnd() + Environment.NewLine + stdout;
@@ -285,6 +286,13 @@ namespace PartLock.Core
                 s.Contains("cannot access the file"))
             {
                 return "A file is open in another program (probably SolidWorks). Close it and try again.";
+            }
+
+            // git-lfs pre-push hook refusing to upload files someone else holds the lock on.
+            if (IsLockedFilePush(s))
+            {
+                return "You're trying to check in a file that someone else has checked out. " +
+                       "Undo your changes to it (or ask them to check it in), then try again.";
             }
 
             if (s.Contains("rejected") ||
@@ -340,10 +348,25 @@ namespace PartLock.Core
         public static bool IsRejectedPush(string stderr)
         {
             string s = (stderr ?? string.Empty).ToLowerInvariant();
+            if (IsLockedFilePush(s)) return false;
             return s.Contains("rejected") ||
                    s.Contains("non-fast-forward") ||
                    s.Contains("fetch first") ||
                    s.Contains("failed to push some refs");
+        }
+
+        private static bool IsLockedFilePush(string lower)
+        {
+            return lower.Contains("unable to push locked files") ||
+                   lower.Contains("cannot update locked files") ||
+                   (lower.Contains("locked") && lower.Contains("lock verification"));
+        }
+
+        /// <summary>Hides passwords/tokens embedded in URLs (https://user:token@host) before logging.</summary>
+        public static string Redact(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return System.Text.RegularExpressions.Regex.Replace(text, @"(://)[^/@\s]+@", "$1***@");
         }
 
         private static string FirstMeaningfulLine(string text)
@@ -371,7 +394,7 @@ namespace PartLock.Core
         {
             var log = _log;
             if (log == null || line == null) return;
-            try { log.Report(line); }
+            try { log.Report(Redact(line)); }
             catch (Exception) { }
         }
 

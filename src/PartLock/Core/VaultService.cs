@@ -1,4 +1,5 @@
-// PartLock - the real git-backed vault.
+// PartLock - the real git-backed vault: setup, repo housekeeping and shared helpers.
+// File list lives in VaultService.Part2.cs, user actions in VaultService.Part3.cs.
 //
 // All repo paths coming in or going out are repo-relative and use forward slashes.
 // Commands that take paths put them after "--" so a file called "-f" cannot be
@@ -7,7 +8,6 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,7 +24,7 @@ namespace PartLock.Core
             "Git LFS is not installed. Reinstall Git for Windows from https://git-scm.com/download/win " +
             "(it includes Git LFS), then restart PartLock.";
 
-        private static readonly string[] LockableExtensions = new string[]
+        internal static readonly string[] LockableExtensions = new string[]
         {
             "sldprt", "sldasm", "slddrw", "step", "stp", "iges", "igs",
             "stl", "x_t", "dxf", "dwg", "pdf", "3mf"
@@ -32,12 +32,13 @@ namespace PartLock.Core
 
         private readonly string _repoRoot;
         private readonly GitRunner _git;
-        private readonly object _cacheLock = new object();
 
         private IProgress<string> _log;
+        // Only touched from one logical operation at a time (the UI serializes actions).
         private List<LockInfo> _locks = new List<LockInfo>();
         private HashSet<string> _behindRemote = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private string _serverUserName;
+        private bool _repoReady;
 
         public VaultService(string repoRoot, IProgress<string> log = null)
         {
@@ -49,10 +50,7 @@ namespace PartLock.Core
             _git = new GitRunner(new DelegateProgress(LogLine));
         }
 
-        public string RepoRoot
-        {
-            get { return _repoRoot; }
-        }
+        public string RepoRoot { get { return _repoRoot; } }
 
         public IProgress<string> Log
         {
@@ -60,13 +58,7 @@ namespace PartLock.Core
             set { _log = value; }
         }
 
-        public string ServerUserName
-        {
-            get
-            {
-                lock (_cacheLock) { return _serverUserName; }
-            }
-        }
+        public string ServerUserName { get { return _serverUserName; } }
 
         // ------------------------------------------------------------------
         // Environment / repo discovery helpers
@@ -80,19 +72,12 @@ namespace PartLock.Core
             try
             {
                 GitResult version = await runner.RunAsync(
-                    null, new[] { "--version" }, CancellationToken.None).ConfigureAwait(false);
+                    null, new[] { "--version" }, CancellationToken.None, null, true, 30000).ConfigureAwait(false);
                 check.GitInstalled = true;
                 check.GitVersion = (version.StdOut ?? string.Empty).Trim();
             }
-            catch (Win32Exception)
+            catch (Exception)
             {
-                check.GitInstalled = false;
-                check.Problem = GitMissingMessage;
-                return check;
-            }
-            catch (VaultException)
-            {
-                check.GitInstalled = false;
                 check.Problem = GitMissingMessage;
                 return check;
             }
@@ -100,21 +85,14 @@ namespace PartLock.Core
             try
             {
                 GitResult version = await runner.RunAsync(
-                    null, new[] { "lfs", "version" }, CancellationToken.None).ConfigureAwait(false);
+                    null, new[] { "lfs", "version" }, CancellationToken.None, null, true, 30000).ConfigureAwait(false);
                 check.LfsInstalled = true;
                 check.LfsVersion = (version.StdOut ?? string.Empty).Trim();
             }
-            catch (Win32Exception)
+            catch (Exception)
             {
-                check.LfsInstalled = false;
-            }
-            catch (VaultException)
-            {
-                check.LfsInstalled = false;
-            }
-
-            if (!check.LfsInstalled)
                 check.Problem = LfsMissingMessage;
+            }
 
             return check;
         }
@@ -127,14 +105,7 @@ namespace PartLock.Core
             try
             {
                 string full = Path.GetFullPath(anyPath);
-                if (Directory.Exists(full))
-                    dir = full;
-                else if (File.Exists(full))
-                    dir = Path.GetDirectoryName(full);
-                else
-                    dir = Path.HasExtension(full) ? Path.GetDirectoryName(full) : full;
-
-                if (string.IsNullOrEmpty(dir)) dir = Path.GetPathRoot(full);
+                dir = File.Exists(full) ? Path.GetDirectoryName(full) : full;
             }
             catch (Exception)
             {
@@ -164,28 +135,81 @@ namespace PartLock.Core
             if (string.IsNullOrWhiteSpace(url))
                 throw new VaultException("Enter the address of the team's repository.");
             if (string.IsNullOrWhiteSpace(targetDir))
-                throw new VaultException("Choose a folder to clone the repository into.");
+                throw new VaultException("Choose a folder to download the vault into.");
+
+            string repo = Path.GetFullPath(targetDir);
+            if (Directory.Exists(repo) && Directory.GetFileSystemEntries(repo).Length > 0)
+                throw new VaultException("That folder isn't empty. Pick a new, empty folder for the vault.");
 
             var runner = new GitRunner(log);
             try
             {
-                Report(log, "Setting up Git LFS…");
+                Report(log, "Step 1 of 3: Setting up Git LFS…");
                 await runner.RunAsync(
                     null, new[] { "lfs", "install", "--skip-repo" }, ct, null, false).ConfigureAwait(false);
 
-                Report(log, "Cloning the repository…");
-                await runner.RunAsync(null, new[] { "clone", url, targetDir }, ct).ConfigureAwait(false);
+                Report(log, "Step 2 of 3: Downloading the vault (this can take a few minutes the first time)…");
+                await runner.RunAsync(null, new[] { "clone", url.Trim(), repo }, ct, null, true, 3600000).ConfigureAwait(false);
 
-                string repo = Path.GetFullPath(targetDir);
-                await runner.RunAsync(
-                    repo, new[] { "config", "lfs.locksverify", "true" }, ct).ConfigureAwait(false);
-
-                Report(log, "Downloading CAD files…");
-                await runner.RunAsync(repo, new[] { "lfs", "pull" }, ct).ConfigureAwait(false);
+                Report(log, "Step 3 of 3: Downloading CAD files and turning on check-out locking…");
+                await PrepareRepoAsync(runner, repo, log, ct).ConfigureAwait(false);
+                await runner.RunAsync(repo, new[] { "lfs", "pull" }, ct, null, true, 3600000).ConfigureAwait(false);
+                Report(log, "Done. The vault is ready.");
             }
             catch (Win32Exception ex)
             {
                 throw new VaultException(GitMissingMessage, ex.Message, ex);
+            }
+        }
+
+        /// <summary>
+        /// Per-clone settings that make locking actually enforced on this computer:
+        /// the Git LFS hooks (the pre-push hook is what refuses to upload files someone else
+        /// has checked out; GitHub itself does not block it) and strict lock verification.
+        /// </summary>
+        private static async Task PrepareRepoAsync(GitRunner runner, string repo, IProgress<string> log, CancellationToken ct)
+        {
+            GitResult install = await runner.RunAsync(
+                repo, new[] { "lfs", "install", "--local" }, ct, null, false).ConfigureAwait(false);
+            if (install.ExitCode != 0)
+            {
+                // Usually an existing non-LFS hook. --force keeps locking working; log so an admin can see it.
+                Report(log, "Git LFS hooks were not installed cleanly; retrying with --force.");
+                await runner.RunAsync(repo, new[] { "lfs", "install", "--local", "--force" }, ct, null, false).ConfigureAwait(false);
+            }
+            await runner.RunAsync(repo, new[] { "config", "lfs.locksverify", "true" }, ct, null, false).ConfigureAwait(false);
+            await runner.RunAsync(repo, new[] { "config", "lfs.setlockablereadonly", "true" }, ct, null, false).ConfigureAwait(false);
+        }
+
+        /// <summary>Runs once per session before the first file listing, and before every update.</summary>
+        private async Task EnsureRepoReadyAsync(CancellationToken ct)
+        {
+            if (!_repoReady)
+            {
+                await PrepareRepoAsync(_git, _repoRoot, _log, ct).ConfigureAwait(false);
+                _repoReady = true;
+            }
+            await RecoverInterruptedUpdateAsync(ct).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// If an earlier Get Latest / Check In was cut off mid-rebase (power cut, killed app), the
+        /// working copy is stuck. Abort the rebase: autostash puts the user's edits back.
+        /// </summary>
+        private async Task RecoverInterruptedUpdateAsync(CancellationToken ct)
+        {
+            foreach (string marker in new[] { "rebase-merge", "rebase-apply" })
+            {
+                GitResult where = await GitAsync(new[] { "rev-parse", "--git-path", marker }, ct, null, false).ConfigureAwait(false);
+                if (where.ExitCode != 0) continue;
+                string path = where.StdOut.Trim();
+                if (path.Length == 0) continue;
+                if (!Path.IsPathRooted(path)) path = Path.Combine(_repoRoot, path);
+                if (!Directory.Exists(path)) continue;
+
+                LogLine("An earlier update was interrupted. Putting things back the way they were…");
+                await GitAsync(new[] { "rebase", "--abort" }, ct, null, false).ConfigureAwait(false);
+                return;
             }
         }
 
@@ -195,129 +219,108 @@ namespace PartLock.Core
 
             try
             {
-                using (var stream = new FileStream(
-                    fullPath, FileMode.Open, FileAccess.Read, FileShare.None))
+                using (new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.None))
                 {
                     return false;
                 }
             }
-            catch (FileNotFoundException)
-            {
-                return false;
-            }
-            catch (DirectoryNotFoundException)
-            {
-                return false;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return false;
-            }
-            catch (IOException)
-            {
-                return true;
-            }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+            catch (IOException) { return true; }
         }
 
         // ------------------------------------------------------------------
-        // Locking configuration
+        // Locking configuration (one-time, team lead)
         // ------------------------------------------------------------------
 
-        public async Task<bool> IsLockingConfiguredAsync(
-            CancellationToken ct = default(CancellationToken))
+        public Task<bool> IsLockingConfiguredAsync(CancellationToken ct = default(CancellationToken))
         {
             ct.ThrowIfCancellationRequested();
-
             string path = Path.Combine(_repoRoot, ".gitattributes");
-            if (!File.Exists(path)) return false;
+            if (!File.Exists(path)) return Task.FromResult(false);
 
             string text;
-            try
-            {
-                text = await ReadAllTextAsync(path).ConfigureAwait(false);
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return false;
-            }
+            try { text = ReadAllText(path); }
+            catch (IOException) { return Task.FromResult(false); }
+            catch (UnauthorizedAccessException) { return Task.FromResult(false); }
 
             foreach (string line in SplitLines(text))
             {
-                if (line.IndexOf("lockable", StringComparison.OrdinalIgnoreCase) < 0)
-                    continue;
-
-                // Accept both a plain "*.sldprt" rule and the letter-class form that
-                // EnableLockingAsync writes: *.[sS][lL][dD][pP][rR][tT].
+                if (line.IndexOf("lockable", StringComparison.OrdinalIgnoreCase) < 0) continue;
                 if (line.IndexOf("sldprt", StringComparison.OrdinalIgnoreCase) >= 0 ||
                     line.IndexOf("[sS][lL][dD][pP][rR][tT]", StringComparison.Ordinal) >= 0)
                 {
-                    return true;
+                    return Task.FromResult(true);
                 }
             }
-            return false;
+            return Task.FromResult(false);
         }
 
+        /// <summary>
+        /// Adopts an existing repo without touching its history: one normal commit that adds the
+        /// locking rules and re-stores the current CAD files in Git LFS. Every old commit stays as is.
+        /// </summary>
         public async Task EnableLockingAsync(CancellationToken ct = default(CancellationToken))
         {
             ct.ThrowIfCancellationRequested();
-            LogLine("Setting up file locking for CAD files…");
+            await EnsureRepoReadyAsync(ct).ConfigureAwait(false);
 
-            var attributeLines = new List<string>();
-            foreach (string extension in LockableExtensions)
+            LogLine("Step 1 of 5: Checking this folder is clean and connected to the server…");
+            await EnsureUpstreamAsync(ct).ConfigureAwait(false);
+
+            GitResult status = await GitAsync(
+                new[] { "status", "--porcelain=v1", "-z", "--untracked-files=no" }, ct).ConfigureAwait(false);
+            if (SplitNul(status.StdOut).Count > 0)
             {
-                attributeLines.Add(
-                    MakeLockablePattern(extension) + " filter=lfs diff=lfs merge=lfs -text lockable");
+                throw new VaultException(
+                    "You have changes that aren't checked in yet. Check them in (or undo them) first, " +
+                    "so the locking setup commit contains only the setup.",
+                    status.StdOut.Replace('\0', '\n'));
             }
 
-            await AppendMissingLinesAsync(
-                Path.Combine(_repoRoot, ".gitattributes"), attributeLines, ct).ConfigureAwait(false);
+            LogLine("Step 2 of 5: Getting the latest version from the server…");
+            await GitAsync(new[] { "pull", "--rebase" }, ct, null, true, 3600000).ConfigureAwait(false);
 
-            await AppendMissingLinesAsync(
-                Path.Combine(_repoRoot, ".gitignore"),
-                new[] { "~$*", "*.tmp" }, ct).ConfigureAwait(false);
+            LogLine("Step 3 of 5: Writing the locking rules (.gitattributes, .gitignore)…");
+            var attributeLines = new List<string>();
+            foreach (string extension in LockableExtensions)
+                attributeLines.Add(MakeLockablePattern(extension) + " filter=lfs diff=lfs merge=lfs -text lockable");
 
-            LogLine("Telling Git LFS to lock CAD files…");
-            await RunGitAsync(new[] { "lfs", "install", "--local" }, ct).ConfigureAwait(false);
-            await RunGitAsync(new[] { "config", "lfs.locksverify", "true" }, ct).ConfigureAwait(false);
+            AppendMissingLines(Path.Combine(_repoRoot, ".gitattributes"), attributeLines);
+            AppendMissingLines(Path.Combine(_repoRoot, ".gitignore"), new[] { "~$*", "*.tmp" });
 
-            await RunGitAsync(new[] { "add", ".gitattributes", ".gitignore" }, ct).ConfigureAwait(false);
-            await RunGitAsync(new[] { "add", "--renormalize", "." }, ct).ConfigureAwait(false);
+            LogLine("Step 4 of 5: Storing the current CAD files in Git LFS (history is not changed)…");
+            await GitAsync(new[] { "add", "--", ".gitattributes", ".gitignore" }, ct).ConfigureAwait(false);
+            await GitAsync(new[] { "add", "--renormalize", "--", "." }, ct, null, true, 3600000).ConfigureAwait(false);
 
-            GitResult staged = await RunGitAsync(
-                new[] { "diff", "--cached", "--quiet" }, ct, null, false).ConfigureAwait(false);
-
+            GitResult staged = await GitAsync(new[] { "diff", "--cached", "--quiet" }, ct, null, false).ConfigureAwait(false);
             if (staged.ExitCode == 1)
             {
-                LogLine("Saving the locking setup…");
-                await RunGitAsync(
-                    new[] { "commit", "-m", "Enable PartLock file locking (Git LFS)" }, ct).ConfigureAwait(false);
+                await GitAsync(new[] { "commit", "-m", "Enable PartLock file locking (Git LFS)" }, ct).ConfigureAwait(false);
             }
             else if (staged.ExitCode != 0)
             {
-                throw ErrorFrom(staged);
+                throw new VaultException(GitRunner.FriendlyError(staged.StdErr), staged.StdErr);
             }
-
-            string upstream = await GetUpstreamAsync(ct).ConfigureAwait(false);
-            if (upstream == null)
+            else
             {
-                throw new VaultException(
-                    "This branch isn't connected to the server yet. Publish it first " +
-                    "(for example, git push -u origin HEAD), then run Enable Locking again.");
+                LogLine("Locking was already set up; nothing new to save.");
             }
 
-            LogLine("Uploading the locking setup…");
-            await RunGitAsync(new[] { "push" }, ct).ConfigureAwait(false);
+            LogLine("Step 5 of 5: Uploading to the server…");
+            await PushWithRetryAsync(ct).ConfigureAwait(false);
+
+            // Files are writable from before the setup; make the vault behave like everyone else's.
+            await GetFilesAsync(false, ct).ConfigureAwait(false);
+            LogLine("Locking is on. Teammates get it automatically next time they Get Latest.");
         }
 
         // ------------------------------------------------------------------
         // git plumbing helpers
         // ------------------------------------------------------------------
 
-        private async Task<GitResult> RunGitAsync(
+        private async Task<GitResult> GitAsync(
             IEnumerable<string> args,
             CancellationToken ct,
             string stdin = null,
@@ -326,8 +329,7 @@ namespace PartLock.Core
         {
             try
             {
-                return await _git.RunAsync(
-                    _repoRoot, args, ct, stdin, throwOnError, timeoutMs).ConfigureAwait(false);
+                return await _git.RunAsync(_repoRoot, args, ct, stdin, throwOnError, timeoutMs).ConfigureAwait(false);
             }
             catch (Win32Exception ex)
             {
@@ -335,476 +337,33 @@ namespace PartLock.Core
             }
         }
 
-        /// <summary>Short alias used by the file-list and action halves of the class.</summary>
-        private Task<GitResult> GitAsync(
-            IEnumerable<string> args,
-            CancellationToken ct,
-            string stdin = null,
-            bool throwOnError = true)
-        {
-            return RunGitAsync(args, ct, stdin, throwOnError);
-        }
-
-        private async Task<List<string>> GetTrackedFilesAsync(CancellationToken ct)
-        {
-            GitResult result = await RunGitAsync(
-                new[] { "ls-files", "-z" }, ct).ConfigureAwait(false);
-            return SplitNul(result.StdOut);
-        }
-
-        private async Task<List<string>> GetUntrackedFilesAsync(CancellationToken ct)
-        {
-            GitResult result = await RunGitAsync(
-                new[] { "ls-files", "-z", "--others", "--exclude-standard" }, ct).ConfigureAwait(false);
-            return SplitNul(result.StdOut);
-        }
-
-        private async Task<HashSet<string>> GetTrackedSetAsync(CancellationToken ct)
-        {
-            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string path in await GetTrackedFilesAsync(ct).ConfigureAwait(false))
-            {
-                string normalized = NormalizePath(path);
-                if (!string.IsNullOrEmpty(normalized)) set.Add(normalized);
-            }
-            return set;
-        }
-
-        private async Task<HashSet<string>> GetLockableAsync(
-            List<string> candidates, CancellationToken ct)
-        {
-            var lockable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (candidates == null || candidates.Count == 0) return lockable;
-
-            var input = new StringBuilder();
-            foreach (string path in candidates)
-                input.Append(path).Append('\0');
-
-            GitResult result = await RunGitAsync(
-                new[] { "check-attr", "--stdin", "-z", "lockable" },
-                ct,
-                input.ToString(),
-                false).ConfigureAwait(false);
-
-            if (result.ExitCode == 0)
-            {
-                List<string> parts = SplitNul(result.StdOut);
-                for (int i = 0; i + 2 < parts.Count; i += 3)
-                {
-                    string path = NormalizePath(parts[i]);
-                    string attribute = parts[i + 1];
-                    string value = parts[i + 2];
-
-                    if (string.Equals(attribute, "lockable", StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(value, "set", StringComparison.OrdinalIgnoreCase))
-                    {
-                        lockable.Add(path);
-                    }
-                }
-                return lockable;
-            }
-
-            LogLine("Couldn't read the lockable-file rules; using the CAD file extensions instead. " +
-                    GitRunner.FriendlyError(result.StdErr));
-
-            foreach (string path in candidates)
-            {
-                if (HasLockableExtension(path)) lockable.Add(path);
-            }
-            return lockable;
-        }
-
         private async Task<string> GetUpstreamAsync(CancellationToken ct)
         {
-            GitResult result = await RunGitAsync(
-                new[] { "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" },
-                ct,
-                null,
-                false).ConfigureAwait(false);
-
+            GitResult result = await GitAsync(
+                new[] { "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }, ct, null, false).ConfigureAwait(false);
             if (result.ExitCode != 0) return null;
-
             string name = (result.StdOut ?? string.Empty).Trim();
             return name.Length == 0 ? null : name;
         }
 
         private async Task EnsureUpstreamAsync(CancellationToken ct)
         {
-            string upstream = await GetUpstreamAsync(ct).ConfigureAwait(false);
-            if (upstream == null)
+            if (await GetUpstreamAsync(ct).ConfigureAwait(false) == null)
             {
                 throw new VaultException(
-                    "This folder isn't connected to a server branch yet. Publish the branch first, then try again.");
+                    "This folder isn't connected to a branch on the server yet. " +
+                    "Ask your team lead to push the main branch first, then try again.");
             }
         }
 
         private async Task<bool> HasUpstreamAsync(CancellationToken ct)
         {
-            string upstream = await GetUpstreamAsync(ct).ConfigureAwait(false);
-            return upstream != null;
-        }
-
-        private async Task<HashSet<string>> ComputeBehindAsync(CancellationToken ct)
-        {
-            var behind = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            string upstream = await GetUpstreamAsync(ct).ConfigureAwait(false);
-            if (upstream == null) return behind;
-
-            GitResult diff = await RunGitAsync(
-                new[] { "diff", "--name-only", "-z", "HEAD...@{u}" },
-                ct,
-                null,
-                false).ConfigureAwait(false);
-
-            if (diff.ExitCode != 0) return null;
-
-            foreach (string raw in SplitNul(diff.StdOut))
-            {
-                string path = NormalizePath(raw);
-                if (!string.IsNullOrEmpty(path)) behind.Add(path);
-            }
-            return behind;
-        }
-
-        private void SetLocks(List<LockInfo> locks)
-        {
-            var clean = new List<LockInfo>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            if (locks != null)
-            {
-                foreach (LockInfo item in locks)
-                {
-                    if (item == null || string.IsNullOrEmpty(item.Path)) continue;
-                    item.Path = NormalizePath(item.Path);
-                    if (seen.Add(item.Path)) clean.Add(item);
-                }
-            }
-
-            lock (_cacheLock) { _locks = clean; }
-        }
-
-        private List<LockInfo> SnapshotLocks()
-        {
-            lock (_cacheLock) { return new List<LockInfo>(_locks); }
-        }
-
-        private Dictionary<string, LockInfo> GetLockMap()
-        {
-            var map = new Dictionary<string, LockInfo>(StringComparer.OrdinalIgnoreCase);
-            foreach (LockInfo item in SnapshotLocks())
-            {
-                if (item != null && !string.IsNullOrEmpty(item.Path))
-                    map[NormalizePath(item.Path)] = item;
-            }
-            return map;
-        }
-
-        private void SetServerUserName(string name)
-        {
-            lock (_cacheLock) { _serverUserName = name; }
-        }
-
-        private void AddCachedLock(string path, string id)
-        {
-            path = NormalizePath(path);
-            lock (_cacheLock)
-            {
-                var list = new List<LockInfo>(_locks);
-                for (int i = list.Count - 1; i >= 0; i--)
-                {
-                    if (string.Equals(list[i].Path, path, StringComparison.OrdinalIgnoreCase))
-                        list.RemoveAt(i);
-                }
-
-                var info = new LockInfo();
-                info.Id = id;
-                info.Path = path;
-                info.Owner = _serverUserName;
-                info.LockedAtUtc = DateTime.UtcNow;
-                info.IsMine = true;
-                list.Add(info);
-                _locks = list;
-            }
-        }
-
-        private void RemoveCachedLock(string path)
-        {
-            path = NormalizePath(path);
-            lock (_cacheLock)
-            {
-                var list = new List<LockInfo>();
-                foreach (LockInfo item in _locks)
-                {
-                    if (!string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase))
-                        list.Add(item);
-                }
-                _locks = list;
-            }
-        }
-
-        private HashSet<string> SnapshotBehind()
-        {
-            lock (_cacheLock)
-            {
-                return new HashSet<string>(_behindRemote, StringComparer.OrdinalIgnoreCase);
-            }
+            return await GetUpstreamAsync(ct).ConfigureAwait(false) != null;
         }
 
         // ------------------------------------------------------------------
-        // Push / unlock helpers
+        // Small utilities
         // ------------------------------------------------------------------
-
-        private async Task TryUnlockAsync(
-            string path, LockInfo info, bool force, CancellationToken ct)
-        {
-            var byPathArgs = new List<string> { "lfs", "unlock" };
-            if (force) byPathArgs.Add("--force");
-            byPathArgs.Add("--");
-            byPathArgs.Add(path);
-
-            GitResult byPath = await RunGitAsync(
-                byPathArgs, ct, null, false).ConfigureAwait(false);
-
-            if (byPath.ExitCode == 0)
-            {
-                RemoveCachedLock(path);
-                return;
-            }
-
-            string id = info != null ? info.Id : null;
-            if (!string.IsNullOrEmpty(id))
-            {
-                var byIdArgs = new List<string> { "lfs", "unlock" };
-                if (force) byIdArgs.Add("--force");
-                byIdArgs.Add("--id=" + id);
-
-                GitResult byId = await RunGitAsync(
-                    byIdArgs, ct, null, false).ConfigureAwait(false);
-
-                if (byId.ExitCode == 0)
-                {
-                    RemoveCachedLock(path);
-                    return;
-                }
-
-                LogLine("Couldn't release the check-out on " + path + ". " +
-                        GitRunner.FriendlyError(byId.StdErr));
-                return;
-            }
-
-            LogLine("Couldn't release the check-out on " + path + ". " +
-                    GitRunner.FriendlyError(byPath.StdErr));
-        }
-
-        private async Task RollbackLocksAsync(
-            List<string> paths, List<string> ids, CancellationToken ct)
-        {
-            for (int i = paths.Count - 1; i >= 0; i--)
-            {
-                string path = paths[i];
-                string id = i < ids.Count ? ids[i] : null;
-
-                try
-                {
-                    if (!string.IsNullOrEmpty(id))
-                    {
-                        await RunGitAsync(
-                            new[] { "lfs", "unlock", "--force", "--id=" + id },
-                            ct,
-                            null,
-                            false).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        await RunGitAsync(
-                            new[] { "lfs", "unlock", "--force", "--", path },
-                            ct,
-                            null,
-                            false).ConfigureAwait(false);
-                    }
-                }
-                catch (Exception)
-                {
-                    // Best effort only: the original lock failure is what the user needs to see.
-                }
-            }
-        }
-
-        private async Task AddPathsAsync(List<string> paths, CancellationToken ct)
-        {
-            for (int i = 0; i < paths.Count; i += 50)
-            {
-                var args = new List<string> { "add", "-A", "--" };
-                for (int j = i; j < paths.Count && j < i + 50; j++)
-                    args.Add(paths[j]);
-
-                await RunGitAsync(args, ct).ConfigureAwait(false);
-            }
-        }
-
-        private async Task RestorePathsAsync(List<string> paths, CancellationToken ct)
-        {
-            for (int i = 0; i < paths.Count; i += 50)
-            {
-                var args = new List<string>
-                {
-                    "restore", "--source=HEAD", "--staged", "--worktree", "--"
-                };
-                for (int j = i; j < paths.Count && j < i + 50; j++)
-                    args.Add(paths[j]);
-
-                await RunGitAsync(args, ct).ConfigureAwait(false);
-            }
-        }
-
-        // ------------------------------------------------------------------
-        // Parsing helpers
-        // ------------------------------------------------------------------
-
-        private static Dictionary<string, StatusEntry> ParseStatus(string text)
-        {
-            var map = new Dictionary<string, StatusEntry>(StringComparer.OrdinalIgnoreCase);
-            if (string.IsNullOrEmpty(text)) return map;
-
-            string[] fields = text.Split(new char[] { '\0' }, StringSplitOptions.None);
-
-            for (int i = 0; i < fields.Length; i++)
-            {
-                string record = fields[i];
-                if (record.Length < 4) continue;
-
-                char x = record[0];
-                char y = record[1];
-                if (x == '!') continue;
-
-                string path = NormalizePath(record.Substring(3));
-                if (string.IsNullOrEmpty(path)) continue;
-
-                // Rename / copy entries carry the original path as the next NUL field.
-                bool renamed = x == 'R' || y == 'R' || x == 'C' || y == 'C';
-                if (renamed && i + 1 < fields.Length) i++;
-
-                var entry = new StatusEntry();
-                if (x == '?' && y == '?')
-                {
-                    entry.Untracked = true;
-                }
-                else
-                {
-                    entry.Deleted = x == 'D' || y == 'D';
-                    entry.Modified = true;
-                }
-
-                map[path] = entry;
-            }
-
-            return map;
-        }
-
-        private static VaultFile MakeFile(
-            string path,
-            bool lockable,
-            bool tracked,
-            StatusEntry status,
-            Dictionary<string, LockInfo> locks,
-            HashSet<string> behind)
-        {
-            var file = new VaultFile();
-            file.Path = path;
-            file.IsLockable = lockable;
-            file.IsTracked = tracked;
-
-            if (status != null)
-            {
-                file.Deleted = status.Deleted;
-                file.Modified = !status.Untracked;
-            }
-
-            LockInfo info;
-            if (locks.TryGetValue(path, out info)) file.Lock = info;
-
-            file.BehindRemote = tracked && behind.Contains(path);
-            file.State = ComputeState(file);
-            return file;
-        }
-
-        private static FileState ComputeState(VaultFile file)
-        {
-            if (file.Lock != null && !file.Lock.IsMine && (file.Modified || file.Deleted))
-                return FileState.ConflictLockedByOther;
-
-            if (file.Lock != null && !file.Lock.IsMine)
-                return FileState.LockedByOther;
-
-            if (file.Lock != null && file.Lock.IsMine)
-                return FileState.CheckedOutByMe;
-
-            if (file.IsLockable && file.IsTracked && file.Modified)
-                return FileState.ModifiedNotCheckedOut;
-
-            if (!file.IsTracked && !file.Deleted)
-                return FileState.NewFile;
-
-            if (file.Deleted)
-                return FileState.Deleted;
-
-            if (file.Modified)
-                return FileState.Changed;
-
-            if (file.BehindRemote)
-                return FileState.OutOfDate;
-
-            return FileState.Available;
-        }
-
-        private static VaultException ErrorFrom(GitResult result)
-        {
-            string stderr = result != null ? result.StdErr : null;
-            string stdout = result != null ? result.StdOut : null;
-            return new VaultException(
-                GitRunner.FriendlyError(stderr),
-                GitRunner.CombineOutput(stderr, stdout));
-        }
-
-        private static string ReadConfigValue(GitResult result)
-        {
-            if (result == null || result.ExitCode != 0) return null;
-            string value = (result.StdOut ?? string.Empty).Trim();
-            return value.Length == 0 ? null : value;
-        }
-
-        private static Dictionary<string, VaultFile> BuildIndex(IReadOnlyList<VaultFile> files)
-        {
-            var index = new Dictionary<string, VaultFile>(StringComparer.OrdinalIgnoreCase);
-            if (files == null) return index;
-
-            foreach (VaultFile file in files)
-            {
-                if (file != null && !string.IsNullOrEmpty(file.Path))
-                    index[NormalizePath(file.Path)] = file;
-            }
-            return index;
-        }
-
-        private static VaultFile FindFile(Dictionary<string, VaultFile> index, string path)
-        {
-            VaultFile file;
-            return index.TryGetValue(path, out file) ? file : null;
-        }
-
-        private static string FormatLockLine(LockInfo info)
-        {
-            string owner = string.IsNullOrEmpty(info.Owner) ? "someone" : info.Owner;
-            return info.Path + " is checked out by " + owner + " since " + FormatDate(info.LockedAtUtc);
-        }
-
-        private static string FormatDate(DateTime utc)
-        {
-            if (utc == DateTime.MinValue) return "an unknown time";
-            return utc.ToLocalTime().ToString("d MMM yyyy HH:mm");
-        }
 
         private static string DescribeLock(LockInfo info)
         {
@@ -813,50 +372,28 @@ namespace PartLock.Core
             return "by " + owner + " since " + FormatDate(info.LockedAtUtc);
         }
 
+        private static string FormatDate(DateTime utc)
+        {
+            if (utc == DateTime.MinValue) return "an unknown time";
+            return utc.ToLocalTime().ToString("d MMM yyyy HH:mm");
+        }
+
         private static string Files(int count)
         {
             return count + (count == 1 ? " file" : " files");
         }
 
-        // ------------------------------------------------------------------
-        // Small utilities
-        // ------------------------------------------------------------------
-
-        private static List<string> NormalizeDistinct(IReadOnlyList<string> paths)
-        {
-            var result = new List<string>();
-            if (paths == null) return result;
-
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string raw in paths)
-            {
-                if (string.IsNullOrEmpty(raw)) continue;
-                string path = NormalizePath(raw);
-                if (path.Length == 0) continue;
-                if (seen.Add(path)) result.Add(path);
-            }
-            return result;
-        }
-
-        private static string NormalizePath(string path)
-        {
-            if (path == null) return null;
-
-            string result = path.Replace('\\', '/');
-            while (result.StartsWith("./", StringComparison.Ordinal))
-                result = result.Substring(2);
-            return result;
-        }
-
-        /// <summary>Short alias used by the file-list half of the class.</summary>
         private static string Norm(string path)
         {
-            return NormalizePath(path) ?? string.Empty;
+            if (path == null) return string.Empty;
+            string result = path.Replace('\\', '/');
+            while (result.StartsWith("./", StringComparison.Ordinal)) result = result.Substring(2);
+            return result;
         }
 
         private string FullPath(string repoRelative)
         {
-            string relative = (repoRelative ?? string.Empty).Replace('\\', '/').TrimStart('/');
+            string relative = Norm(repoRelative).TrimStart('/');
             return Path.Combine(_repoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
         }
 
@@ -864,9 +401,10 @@ namespace PartLock.Core
         {
             var parts = new List<string>();
             if (string.IsNullOrEmpty(text)) return parts;
-
-            foreach (string part in text.Split(new char[] { '\0' }, StringSplitOptions.RemoveEmptyEntries))
-                parts.Add(part);
+            foreach (string part in text.Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (part.Trim().Length > 0) parts.Add(part);
+            }
             return parts;
         }
 
@@ -876,88 +414,49 @@ namespace PartLock.Core
             return text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         }
 
-        private static bool HasLockableExtension(string path)
-        {
-            string extension = Path.GetExtension(path);
-            if (string.IsNullOrEmpty(extension)) return false;
-
-            extension = extension.Substring(1);
-            foreach (string known in LockableExtensions)
-            {
-                if (string.Equals(known, extension, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            return false;
-        }
-
         private static string MakeLockablePattern(string extension)
         {
             var sb = new StringBuilder("*.");
             foreach (char c in extension)
             {
                 if (char.IsLetter(c))
-                {
-                    sb.Append('[');
-                    sb.Append(char.ToLowerInvariant(c));
-                    sb.Append(char.ToUpperInvariant(c));
-                    sb.Append(']');
-                }
+                    sb.Append('[').Append(char.ToLowerInvariant(c)).Append(char.ToUpperInvariant(c)).Append(']');
                 else
-                {
                     sb.Append(c);
-                }
             }
             return sb.ToString();
         }
 
-        private static async Task<string> ReadAllTextAsync(string path)
+        private static string ReadAllText(string path)
         {
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             using (var reader = new StreamReader(stream, new UTF8Encoding(false), true))
             {
-                return await reader.ReadToEndAsync().ConfigureAwait(false);
+                return reader.ReadToEnd();
             }
         }
 
-        private static async Task AppendMissingLinesAsync(
-            string path, IList<string> lines, CancellationToken ct)
+        private static void AppendMissingLines(string path, IList<string> lines)
         {
-            ct.ThrowIfCancellationRequested();
-
-            string existing = string.Empty;
-            if (File.Exists(path))
-                existing = await ReadAllTextAsync(path).ConfigureAwait(false);
+            string existing = File.Exists(path) ? ReadAllText(path) : string.Empty;
 
             var present = new HashSet<string>(StringComparer.Ordinal);
-            foreach (string line in SplitLines(existing))
-                present.Add(line.Trim());
+            foreach (string line in SplitLines(existing)) present.Add(line.Trim());
 
             var sb = new StringBuilder(existing);
             bool changed = false;
-
             foreach (string line in lines)
             {
-                ct.ThrowIfCancellationRequested();
                 if (string.IsNullOrEmpty(line) || present.Contains(line)) continue;
-
-                if (sb.Length > 0)
-                {
-                    char last = sb[sb.Length - 1];
-                    if (last != '\n' && last != '\r') sb.Append(Environment.NewLine);
-                }
-
-                sb.Append(line);
-                sb.Append(Environment.NewLine);
+                if (sb.Length > 0 && sb[sb.Length - 1] != '\n') sb.Append('\n');
+                sb.Append(line).Append('\n');
                 present.Add(line);
                 changed = true;
             }
-
             if (!changed) return;
 
-            string directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-                Directory.CreateDirectory(directory);
-
+            // .gitattributes may be read-only if a previous tool marked it; make sure we can write.
+            if (File.Exists(path)) File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.ReadOnly);
             File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
         }
 
@@ -976,23 +475,8 @@ namespace PartLock.Core
         private sealed class DelegateProgress : IProgress<string>
         {
             private readonly Action<string> _action;
-
-            public DelegateProgress(Action<string> action)
-            {
-                _action = action;
-            }
-
-            public void Report(string value)
-            {
-                _action(value);
-            }
-        }
-
-        private sealed class StatusEntry
-        {
-            public bool Untracked;
-            public bool Modified;
-            public bool Deleted;
+            public DelegateProgress(Action<string> action) { _action = action; }
+            public void Report(string value) { _action(value); }
         }
     }
 }

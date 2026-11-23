@@ -36,6 +36,9 @@ namespace PartLock.E2E
         private static IVaultService _alice;
         private static IVaultService _bob;
         private static byte[] _bulkheadBeforeEdit;
+        private static readonly List<string> _oldCommits = new List<string>();
+        private static readonly Dictionary<string, string> _oldBlobs = new Dictionary<string, string>();
+        private static int _commitsBeforeSetup;
 
         private static readonly IProgress<string> Log = new CollectingProgress();
 
@@ -64,8 +67,18 @@ namespace PartLock.E2E
 
                 GitOk(_aliceRoot, "add -A");
                 GitOk(_aliceRoot, "commit -m \"Seed CAD files\"");
+                // A pre-existing team repo: several revisions of CAD files stored in plain git (no LFS).
+                for (int rev = 0; rev < 3; rev++)
+                {
+                    AppendBytes(Path.Combine(_aliceRoot, Spar), 2048);
+                    GitOk(_aliceRoot, "commit -am \"Spar revision " + (char)('B' + rev) + "\"");
+                    string sha = GitOk(_aliceRoot, "rev-parse HEAD").Trim();
+                    _oldCommits.Add(sha);
+                    _oldBlobs[sha] = GitOk(_aliceRoot, "rev-parse " + sha + ":" + Spar).Trim();
+                }
                 GitOk(_aliceRoot, "branch -M main");
                 GitOk(_aliceRoot, "push -u origin HEAD:main");
+                _commitsBeforeSetup = int.Parse(GitOk(_aliceRoot, "rev-list --count HEAD").Trim());
             });
 
             await Step("a2. locking is off before setup", async () =>
@@ -86,6 +99,25 @@ namespace PartLock.E2E
                 string listed = GitOk(_aliceRoot, "lfs ls-files");
                 Require(listed.Contains(Spar), "git lfs ls-files should list " + Spar);
                 Require(listed.Contains(Bulkhead), "git lfs ls-files should list " + Bulkhead);
+            });
+
+            await Step("a4. existing history is untouched after setup (no rewrite, no data loss)", async () =>
+            {
+                GitOk(_aliceRoot, "fetch origin");
+                int after = int.Parse(GitOk(_aliceRoot, "rev-list --count origin/main").Trim());
+                Require(after == _commitsBeforeSetup + 1,
+                    "setup should add exactly one commit on the server, had " + _commitsBeforeSetup + " now " + after);
+                foreach (string sha in _oldCommits)
+                {
+                    var anc = Git(_aliceRoot, "merge-base --is-ancestor " + sha + " origin/main");
+                    Require(anc.Code == 0, "old commit " + sha + " is no longer in the server history");
+                    string blob = GitOk(_aliceRoot, "rev-parse " + sha + ":" + Spar).Trim();
+                    Require(blob == _oldBlobs[sha], "old file version in " + sha + " changed");
+                }
+                // The old full-size bytes are still retrievable from an old commit.
+                string size = GitOk(_aliceRoot, "cat-file -s " + _oldCommits[0] + ":" + Spar).Trim();
+                Require(long.Parse(size) > 60 * 1024, "old revision should still be the real file, size " + size);
+                await Task.CompletedTask;
             });
 
             await Step("b1. bob clones the vault", async () =>
