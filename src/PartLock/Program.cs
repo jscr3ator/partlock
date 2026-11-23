@@ -129,25 +129,21 @@ namespace PartLock
 
             if (environment != null && !string.IsNullOrEmpty(environment.Problem))
             {
-                DialogResult answer = MessageBox.Show(null,
-                    environment.Problem + "\n\nOpen the Git download page now?",
-                    "PartLock needs Git", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-                if (answer == DialogResult.Yes)
-                {
-                    try
-                    {
-                        Process.Start("https://git-scm.com/download/win");
-                    }
-                    catch
-                    {
-                        // The user can find the page themselves.
-                    }
-                }
-                return;
+                // Installed but not on PATH (e.g. installed while Windows Explorer was open)?
+                GitRunner.ResolveExecutable();
+                try { environment = VaultService.CheckEnvironmentAsync().GetAwaiter().GetResult(); }
+                catch (Exception) { }
+            }
+
+            if (environment != null && !string.IsNullOrEmpty(environment.Problem))
+            {
+                if (!InstallGit(environment)) return;
             }
 
             AppSettings settings = AppSettings.Load();
             string root = NormalizeRepo(settings.RepoPath);
+
+            if (!EnsureGitHubSignIn(root)) return;
 
             if (root == null)
             {
@@ -163,6 +159,91 @@ namespace PartLock
             }
 
             Application.Run(new MainForm(new VaultService(root, null)));
+        }
+
+        /// <summary>Installs Git for Windows (with Git LFS) for the user. False = quit.</summary>
+        private static bool InstallGit(EnvironmentCheck environment)
+        {
+            bool gitMissing = !environment.GitInstalled;
+            EnvironmentCheck after = null;
+            using (var dialog = new SetupStepDialog(
+                gitMissing ? "Install Git" : "Update Git",
+                gitMissing ? "PartLock needs Git for Windows" : "PartLock needs Git LFS",
+                (gitMissing
+                    ? "Git for Windows isn't installed on this computer yet. "
+                    : "Your Git for Windows is missing Git LFS, which PartLock uses to lock files. ")
+                + "PartLock can install it for you now – it's free, takes a minute or two, and "
+                + "includes everything PartLock needs (Git LFS and the GitHub sign-in helper).",
+                gitMissing ? "Install Git" : "Update Git",
+                async delegate(IProgress<string> log, System.Threading.CancellationToken ct)
+                {
+                    await GitSetup.InstallGitAsync(log, ct);
+                    after = await VaultService.CheckEnvironmentAsync();
+                    if (after != null && !string.IsNullOrEmpty(after.Problem))
+                    {
+                        GitRunner.ResolveExecutable();
+                        after = await VaultService.CheckEnvironmentAsync();
+                    }
+                    if (after != null && !string.IsNullOrEmpty(after.Problem))
+                        throw new VaultException("Git was installed but PartLock still can't find it. Restart PartLock (or your computer) and try again.");
+                    return true;
+                },
+                "Windows will ask for permission to install. Prefer to do it yourself? "
+                + "Get it from https://git-scm.com/download/win, then restart PartLock."))
+            {
+                return dialog.ShowDialog() == DialogResult.OK;
+            }
+        }
+
+        /// <summary>
+        /// Makes sure this computer is signed in to GitHub (via Git Credential Manager) before
+        /// anything talks to the server. Skipped for vaults hosted somewhere other than GitHub.
+        /// False = the user quit.
+        /// </summary>
+        private static bool EnsureGitHubSignIn(string repoRoot)
+        {
+            var none = System.Threading.CancellationToken.None;
+            GitHubAccount account = null;
+            try
+            {
+                if (!GitSetup.RepoUsesGitHubAsync(repoRoot, none).GetAwaiter().GetResult()) return true;
+                account = GitSetup.GetSignedInAccountAsync(none).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.LogToFile("Checking GitHub sign-in failed.", ex.ToString());
+            }
+
+            if (account == null)
+            {
+                using (var dialog = new SetupStepDialog(
+                    "Sign in",
+                    "Sign in to GitHub",
+                    "Your team's vault lives on GitHub, so PartLock needs you signed in before it can "
+                    + "download files or check them out. Click the button below – a GitHub window or "
+                    + "your browser opens; sign in there and approve access.",
+                    "Sign in with GitHub",
+                    async delegate(IProgress<string> log, System.Threading.CancellationToken ct)
+                    {
+                        account = await GitSetup.SignInAsync(log, ct);
+                        return account != null;
+                    },
+                    "No GitHub account yet? Create a free one at https://github.com/signup and ask your "
+                    + "team lead to add you to the vault repository."))
+                {
+                    if (dialog.ShowDialog() != DialogResult.OK || account == null) return false;
+                }
+            }
+
+            try
+            {
+                GitSetup.FillCommitIdentityAsync(account, none).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.LogToFile("Setting name/email from GitHub failed.", ex.ToString());
+            }
+            return true;
         }
 
         private static string AskForRepo(IWin32Window owner)

@@ -4,11 +4,11 @@ PartLock is the small app that keeps our SolidWorks files from stepping on each 
 
 ## Install once (5 minutes)
 
-1. Install **Git for Windows** from <https://git-scm.com/download/win>. Click Next through the default options. Do not untick **Git LFS** or **Git Credential Manager** — PartLock needs both.
+1. You need a **GitHub account**. No account yet? Make a free one at <https://github.com/signup> and send your username to your lead so they can add you to the vault.
 2. Run **`PartLock.exe`**. There is nothing to install; keep it anywhere handy (Desktop is fine).
-3. Paste the repository URL your lead gave you (it looks like `https://github.com/your-org/cad.git`).
-4. Choose a folder for your copy (the default under `Documents` is fine) and click **Clone** / **Open**.
-5. Your browser (or a small Git Credential Manager window) will ask you to sign in to GitHub. Sign in with your **own** GitHub account and approve. You only do this once per computer.
+3. If Git isn't on your computer yet, PartLock offers to **install Git for Windows** for you. Click **Install Git** and say **Yes** when Windows asks for permission. (Prefer to do it yourself? Get it from <https://git-scm.com/download/win> and keep the default options.)
+4. PartLock then asks you to **Sign in to GitHub**. Click **Sign in with GitHub**; your browser (or a small Git Credential Manager window) opens. Sign in with your **own** GitHub account and approve. PartLock won't continue until you're signed in, and you only do this once per computer. Your commit name and email are filled in from your GitHub account if they aren't set yet.
+5. Paste the repository URL your lead gave you (it looks like `https://github.com/your-org/cad.git`), choose a folder (the default under `Documents` is fine) and click **Download**.
 
 ## The daily loop
 

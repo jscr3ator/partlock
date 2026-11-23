@@ -106,6 +106,6 @@ Run the end-to-end tests (spins up a throwaway Gitea server with LFS + locks, wh
 - [ ] Payment method + $10 budget alert set up.
 - [ ] Lead ran **"Set it up (team lead)"** and the push succeeded.
 - [ ] A test part checked out by one person shows **LockedByOther** for another.
-- [ ] Git for Windows installed by everyone; each person signed in to GitHub once.
+- [ ] Everyone has a GitHub account and has run PartLock once (it installs Git for Windows if missing and makes each person sign in to GitHub before going further).
 - [ ] Everyone can Get Latest and sees green **Available** rows.
 - [ ] Team guide (`docs/TEAM-GUIDE.md`) posted in the team chat.

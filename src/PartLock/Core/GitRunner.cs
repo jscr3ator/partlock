@@ -42,6 +42,50 @@ namespace PartLock.Core
 
         private readonly IProgress<string> _log;
 
+        /// <summary>
+        /// The git executable to run. "git" (found on PATH) by default; switched to a full path
+        /// by <see cref="ResolveExecutable"/> when Git was just installed and PATH in this
+        /// process doesn't know about it yet.
+        /// </summary>
+        public static string Executable = "git";
+
+        /// <summary>Points <see cref="Executable"/> at git.exe if it is in a standard install folder.</summary>
+        public static void ResolveExecutable()
+        {
+            foreach (string candidate in GitInstallCandidates())
+            {
+                try
+                {
+                    if (File.Exists(candidate))
+                    {
+                        Executable = candidate;
+                        string dir = Path.GetDirectoryName(candidate);
+                        string path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+                        if (path.IndexOf(dir, StringComparison.OrdinalIgnoreCase) < 0)
+                            Environment.SetEnvironmentVariable("PATH", dir + Path.PathSeparator + path);
+                        return;
+                    }
+                }
+                catch (Exception) { }
+            }
+        }
+
+        private static IEnumerable<string> GitInstallCandidates()
+        {
+            string[] roots =
+            {
+                Environment.GetEnvironmentVariable("ProgramW6432"),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) ?? string.Empty, "Programs")
+            };
+            foreach (string root in roots)
+            {
+                if (string.IsNullOrEmpty(root)) continue;
+                yield return Path.Combine(root, "Git", "cmd", "git.exe");
+            }
+        }
+
         public GitRunner(IProgress<string> log = null)
         {
             _log = log;
@@ -68,7 +112,7 @@ namespace PartLock.Core
             Report(BuildDisplayCommand(userArgs));
 
             var psi = new ProcessStartInfo();
-            psi.FileName = "git";
+            psi.FileName = Executable;
             psi.Arguments = BuildCommandLine(userArgs);
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
