@@ -56,12 +56,14 @@ Don't enforce it with tooling; just put it in the team guide. One subsystem per 
 
 ## 5. Working rules
 
-- **Everyone works on `main`.** No feature branches for CAD. Locks are per-branch on the server, so branches would let two people "lock" the same part invisibly.
+- **Everyone works on `main`.** No feature branches for CAD. SolidWorks files are binary and can't be merged, so two branches that both change a part can never be combined — one person's work would have to be thrown away. Locking only protects you when everyone is on the same branch.
 - Only **Admin/Maintain** org members can force-unlock someone else's lock. Normal Write members can check out and check in freely, but cannot break another user's lock — that protects the part's owner.
 - The repo owner should keep the **member list** current: remove people who leave the team, because a stale lock from a departed member blocks the part until a lead force-unlocks it.
 - Ask the team to **check in at least once per session**. Overnight locks are the #1 cause of force-unlocks.
 
-## 6. Optional: slim the history down (destructive)
+## 6. Optional: slim the history down (destructive — NOT recommended)
+
+**Skip this section.** It isn't needed for locking, and skipping it loses nothing: PartLock's one-time setup keeps every old commit exactly as it is and stores CAD files in LFS from then on. At a repo size of a few hundred MB there is no reason to rewrite history. It's documented only for a repo that has grown to many GB.
 
 If the repo already contains many old CAD revisions and `.git` is huge, you can rewrite history so every past version of the CAD files lives in LFS:
 

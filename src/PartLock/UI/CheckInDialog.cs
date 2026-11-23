@@ -95,8 +95,8 @@ namespace PartLock.UI
                 ForeColor = Theme.Text,
                 Font = Theme.Base
             };
-            _list.Columns.Add("File", Scale(360));
-            _list.Columns.Add("Status", Scale(280));
+            _list.Columns.Add("File", Scale(400));
+            _list.Columns.Add("Status", Scale(240));
 
             var checkedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (preselected != null)
@@ -115,7 +115,7 @@ namespace PartLock.UI
             {
                 foreach (VaultFile file in files)
                 {
-                    var item = new ListViewItem(file.FileName)
+                    var item = new ListViewItem(file.Path)
                     {
                         Tag = file,
                         ToolTipText = file.Path
@@ -280,15 +280,13 @@ namespace PartLock.UI
                 ColorDepth = ColorDepth.Depth32Bit
             };
 
-            using (var bitmap = new Bitmap(1, height))
+            // Owned by the ImageList from here on (it reads it lazily) - do not dispose.
+            var bitmap = new Bitmap(1, height);
+            using (Graphics graphics = Graphics.FromImage(bitmap))
             {
-                using (Graphics graphics = Graphics.FromImage(bitmap))
-                {
-                    graphics.Clear(Color.Transparent);
-                }
-
-                _rowImages.Images.Add(bitmap);
+                graphics.Clear(Color.Transparent);
             }
+            _rowImages.Images.Add(bitmap);
 
             _list.SmallImageList = _rowImages;
             foreach (ListViewItem item in _list.Items)

@@ -276,7 +276,7 @@ namespace PartLock.UI
                 Margin = new Padding(0)
             };
 
-            _getLatestButton = Theme.CreateButton("\u27F3 Get Latest", ButtonKind.Primary);
+            _getLatestButton = Theme.CreateButton("Get Latest", ButtonKind.Primary);
             _getLatestButton.MinimumSize = new Size(0, 40);
             _getLatestButton.Margin = new Padding(0, 0, 8, 0);
             _getLatestButton.Click += GetLatest_Click;
@@ -468,7 +468,7 @@ namespace PartLock.UI
 
             _activityToggle = new LinkLabel
             {
-                Text = "Show activity \u25BE",
+                Text = "Show activity \u25BC",
                 Font = Theme.Small,
                 LinkColor = Theme.Muted,
                 ActiveLinkColor = Theme.Accent,
@@ -796,11 +796,35 @@ namespace PartLock.UI
             List<string> paths = targets.Select(file => file.Path)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
+            bool done = false;
             await RunBusyAsync("Checking out " + FileCountText(paths.Count) + "\u2026", async delegate
             {
                 await _vault.CheckOutAsync(paths);
                 await ReloadAsync(false);
+                done = true;
             });
+            if (done) WarnIfOpenReadOnly(paths);
+        }
+
+        /// <summary>
+        /// SolidWorks keeps a file read-only if it was opened before the check-out. Tell the user to
+        /// close and reopen it, otherwise "Save" fails and they think PartLock is broken.
+        /// </summary>
+        private void WarnIfOpenReadOnly(IEnumerable<string> paths)
+        {
+            List<string> open = new List<string>();
+            foreach (string path in paths)
+            {
+                string full = Path.Combine(_vault.RepoRoot ?? string.Empty, path.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(full) && VaultService.IsFileOpenElsewhere(full))
+                    open.Add(Path.GetFileName(path));
+            }
+            if (open.Count == 0) return;
+            MessageBox.Show(this,
+                "Checked out. " + string.Join(", ", open.ToArray()) + (open.Count == 1 ? " is" : " are") +
+                " already open, probably read-only in SolidWorks.\n\nClose " + (open.Count == 1 ? "it" : "them") +
+                " in SolidWorks and open again so you can save your changes.",
+                "PartLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private async void CheckIn_Click(object sender, EventArgs e)
@@ -1477,6 +1501,16 @@ namespace PartLock.UI
                 return;
             }
 
+            if (file.State == FileState.LockedByOther || file.State == FileState.ConflictLockedByOther)
+            {
+                DialogResult ro = MessageBox.Show(this,
+                    Theme.OwnerText(file, _vault.ServerUserName) + " has " + file.FileName + " checked out, " +
+                    "so you can only look at it.\n\nOpen it read-only?",
+                    "PartLock", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+                if (ro == DialogResult.OK) OpenFile(file);
+                return;
+            }
+
             OpenChoice choice = OpenPromptDialog.Ask(this, file, _vault.ServerUserName);
             if (choice == OpenChoice.Cancel)
             {
@@ -1729,7 +1763,7 @@ namespace PartLock.UI
             _activityVisible = !_activityVisible;
             _activityPanel.Visible = _activityVisible;
             _activityRow.Height = _activityVisible ? LogicalToDeviceUnits(150) : 0f;
-            _activityToggle.Text = _activityVisible ? "Hide activity \u25B4" : "Show activity \u25BE";
+            _activityToggle.Text = _activityVisible ? "Hide activity \u25B2" : "Show activity \u25BC";
 
             if (_activityVisible)
             {
@@ -1803,8 +1837,9 @@ namespace PartLock.UI
 
                 DialogResult answer = MessageBox.Show(this,
                     "Set up check-out locking for this folder?\n\n"
-                    + "PartLock adds lock rules to the repo and converts the CAD files to Git LFS. "
-                    + "Everyone on the team will get this change.",
+                    + "PartLock adds lock rules to the repo and stores the CAD files in Git LFS from now on. "
+                    + "Your existing history is kept exactly as it is (nothing is rewritten or deleted).\n\n"
+                    + "Everyone on the team gets this change the next time they Get Latest.",
                     "Set up locking", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                     MessageBoxDefaultButton.Button2);
                 if (answer != DialogResult.Yes)
@@ -1911,15 +1946,14 @@ namespace PartLock.UI
                 ColorDepth = ColorDepth.Depth32Bit
             };
 
-            using (var bitmap = new Bitmap(1, height))
+            // The ImageList keeps a reference and reads the bitmap later (when its handle is
+            // created), so it must NOT be disposed here; the ImageList owns it from now on.
+            var bitmap = new Bitmap(1, height);
+            using (Graphics graphics = Graphics.FromImage(bitmap))
             {
-                using (Graphics graphics = Graphics.FromImage(bitmap))
-                {
-                    graphics.Clear(Color.Transparent);
-                }
-
-                _rowImages.Images.Add(bitmap);
+                graphics.Clear(Color.Transparent);
             }
+            _rowImages.Images.Add(bitmap);
 
             _list.SmallImageList = _rowImages;
             foreach (ListViewItem item in _list.Items)

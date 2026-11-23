@@ -41,7 +41,77 @@ namespace PartLock
 
         private static void RunDemo()
         {
-            Application.Run(new MainForm(new DemoVaultService()));
+            // Hidden options for docs/screenshots:  --demo --screenshot out.png [--dialog checkin|setup]
+            string[] args = Environment.GetCommandLineArgs();
+            string shot = ArgValue(args, "--screenshot");
+            string dialog = ArgValue(args, "--dialog");
+            var demo = new DemoVaultService();
+            var main = new MainForm(demo);
+            if (shot != null)
+            {
+                var timer = new Timer { Interval = 3500 };
+                timer.Tick += async delegate
+                {
+                    timer.Stop();
+                    try
+                    {
+                        if (dialog == "checkin")
+                        {
+                            var files = (await demo.GetFilesAsync(false)).Where(f =>
+                                f.State == FileState.CheckedOutByMe || f.State == FileState.NewFile ||
+                                f.State == FileState.Changed || f.State == FileState.Deleted).ToList();
+                            var dlg = new CheckInDialog(files, files.Select(f => f.Path).ToList(), demo.ServerUserName);
+                            dlg.StartPosition = FormStartPosition.Manual;
+                            dlg.Location = new System.Drawing.Point(40, 40);
+                            dlg.Shown += delegate { Capture(dlg, shot, 1500, true); };
+                            dlg.Show(main);
+                        }
+                        else if (dialog == "setup")
+                        {
+                            var setup = new SetupForm();
+                            setup.StartPosition = FormStartPosition.Manual;
+                            setup.Location = new System.Drawing.Point(40, 40);
+                            setup.Shown += delegate { Capture(setup, shot, 1500, true); };
+                            setup.Show(main);
+                        }
+                        else
+                        {
+                            Capture(main, shot, 0, true);
+                        }
+                    }
+                    catch (Exception ex) { File.WriteAllText(shot + ".error.txt", ex.ToString()); Application.Exit(); }
+                };
+                main.Shown += delegate { timer.Start(); };
+            }
+            Application.Run(main);
+        }
+
+        private static string ArgValue(string[] args, string name)
+        {
+            for (int i = 0; i < args.Length - 1; i++)
+                if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+            return null;
+        }
+
+        private static void Capture(Form form, string path, int delayMs, bool exit)
+        {
+            var t = new Timer { Interval = Math.Max(1, delayMs) };
+            t.Tick += delegate
+            {
+                t.Stop();
+                form.Activate();
+                form.Refresh();
+                Application.DoEvents();
+                System.Drawing.Rectangle r = form.RectangleToScreen(form.ClientRectangle);
+                using (var bmp = new System.Drawing.Bitmap(r.Width, r.Height))
+                using (var g = System.Drawing.Graphics.FromImage(bmp))
+                {
+                    g.CopyFromScreen(r.Location, System.Drawing.Point.Empty, r.Size);
+                    bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                if (exit) Application.Exit();
+            };
+            t.Start();
         }
 
         private static void RunReal()

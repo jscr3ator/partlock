@@ -19,6 +19,7 @@ namespace PartLock.UI
 
         public ErrorDialog(string message, string details = null)
         {
+            LogToFile(message, details);
             _details = details;
 
             Text = "PartLock \u2013 That didn't work";
@@ -69,7 +70,7 @@ namespace PartLock.UI
 
             _toggle = new LinkLabel
             {
-                Text = "Show details \u25BE",
+                Text = "Show details \u25BC",
                 Font = Theme.Small,
                 LinkColor = Theme.Muted,
                 ActiveLinkColor = Theme.Accent,
@@ -144,7 +145,7 @@ namespace PartLock.UI
             _expanded = !_expanded;
             _detailsHost.Visible = _expanded;
             _copy.Visible = _expanded;
-            _toggle.Text = _expanded ? "Hide details \u25B4" : "Show details \u25BE";
+            _toggle.Text = _expanded ? "Hide details \u25B2" : "Show details \u25BC";
             _detailsRow.Height = _expanded ? LogicalToDeviceUnits(180) : 0;
             Height += _expanded ? LogicalToDeviceUnits(190) : -LogicalToDeviceUnits(190);
         }
@@ -192,6 +193,21 @@ namespace PartLock.UI
                     dialog.ShowDialog();
                 }
             }
+        }
+
+        /// <summary>Appends an error to %LOCALAPPDATA%\PartLock\error.log so a team lead can see what went wrong later.</summary>
+        public static void LogToFile(string message, string details)
+        {
+            try
+            {
+                string dir = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PartLock");
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.AppendAllText(System.IO.Path.Combine(dir, "error.log"),
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + message + Environment.NewLine +
+                    (details ?? string.Empty) + Environment.NewLine + Environment.NewLine);
+            }
+            catch (Exception) { }
         }
     }
 }
