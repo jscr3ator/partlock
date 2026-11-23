@@ -21,12 +21,17 @@ namespace PartLock
 
             bool demo = args != null &&
                         args.Any(a => string.Equals(a, "--demo", StringComparison.OrdinalIgnoreCase));
+            string shellVerb = args != null && args.Length >= 2 ? args[0].ToLowerInvariant() : null;
 
             try
             {
                 if (demo)
                 {
                     RunDemo();
+                }
+                else if (shellVerb == "--checkout" || shellVerb == "--checkin" || shellVerb == "--undo" || shellVerb == "--open")
+                {
+                    RunShellCommand(shellVerb, args[1]);
                 }
                 else
                 {
@@ -114,8 +119,54 @@ namespace PartLock
             t.Start();
         }
 
+        /// <summary>A File Explorer right-click action on one file.</summary>
+        private static void RunShellCommand(string verb, string path)
+        {
+            EnvironmentCheck environment = null;
+            try { environment = VaultService.CheckEnvironmentAsync().GetAwaiter().GetResult(); }
+            catch (Exception) { }
+            if (environment == null || !string.IsNullOrEmpty(environment.Problem))
+            {
+                GitRunner.ResolveExecutable();
+                try { environment = VaultService.CheckEnvironmentAsync().GetAwaiter().GetResult(); }
+                catch (Exception) { }
+            }
+            if (environment == null || !string.IsNullOrEmpty(environment.Problem))
+            {
+                MessageBox.Show("PartLock needs Git. Open PartLock from its own shortcut once to install it.",
+                    "PartLock", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string full;
+            try { full = Path.GetFullPath(path); }
+            catch (Exception) { return; }
+            string root = VaultService.FindRepoRoot(Directory.Exists(full) ? full : Path.GetDirectoryName(full));
+            if (root == null)
+            {
+                MessageBox.Show(Path.GetFileName(full) + " isn't inside a PartLock vault, so it can't be checked out or in.",
+                    "PartLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (verb == "--open")
+            {
+                AppSettings settings = AppSettings.Load();
+                settings.UseRepo(root);
+                settings.Save();
+                RunReal();
+                return;
+            }
+
+            ShellActionForm.ShellVerb action = verb == "--checkout" ? ShellActionForm.ShellVerb.CheckOut
+                : verb == "--checkin" ? ShellActionForm.ShellVerb.CheckIn : ShellActionForm.ShellVerb.Undo;
+            Application.Run(new ShellActionForm(action, root, full));
+        }
+
         private static void RunReal()
         {
+            PartLock.Platform.Updater.CleanUpOldVersion();
+
             EnvironmentCheck environment = null;
             try
             {
@@ -153,6 +204,7 @@ namespace PartLock
             }
             settings.UseRepo(root);
             settings.Save();
+            if (settings.ExplorerMenu) PartLock.Platform.ShellIntegration.Register(Application.ExecutablePath);
 
             Application.Run(new MainForm(new VaultService(root, null), account));
         }

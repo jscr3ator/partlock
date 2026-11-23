@@ -12,6 +12,9 @@ namespace PartLock
     {
         public string RepoPath { get; set; }
 
+        /// <summary>Show the "PartLock" right-click menu on CAD files in File Explorer (default on).</summary>
+        public bool ExplorerMenu { get; set; } = true;
+
         /// <summary>Every vault folder PartLock has opened on this computer (for the repo switcher).</summary>
         public System.Collections.Generic.List<string> KnownRepos { get; } =
             new System.Collections.Generic.List<string>();
@@ -56,6 +59,10 @@ namespace PartLock
                     {
                         settings.RepoPath = value;
                     }
+                    else if (string.Equals(key, "explorerMenu", StringComparison.OrdinalIgnoreCase))
+                    {
+                        settings.ExplorerMenu = !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
+                    }
                     else if (string.Equals(key, "knownRepo", StringComparison.OrdinalIgnoreCase) && value.Length > 0 &&
                              !settings.KnownRepos.Exists(p => string.Equals(p, value, StringComparison.OrdinalIgnoreCase)))
                     {
@@ -84,6 +91,7 @@ namespace PartLock
                 {
                     text.AppendLine("repoPath=" + RepoPath);
                 }
+                if (!ExplorerMenu) text.AppendLine("explorerMenu=off");
                 foreach (string known in KnownRepos)
                 {
                     if (!string.IsNullOrEmpty(known)) text.AppendLine("knownRepo=" + known);

@@ -77,6 +77,8 @@ namespace PartLock.UI
         private Timer _watchDebounce;
         private string _repoFullName;
         private string _repoWebUrl;
+        private ToolStripStatusLabel _updateLink;
+        private PartLock.Platform.UpdateInfo _update;
 
         public MainForm(IVaultService vault, GitHubAccount account = null)
         {
@@ -305,6 +307,11 @@ namespace PartLock.UI
             var switchAccount = new ToolStripMenuItem("Sign out / switch GitHub account\u2026");
             switchAccount.Click += SwitchAccount_Click;
             _accountMenu.Items.Add(switchAccount);
+            _accountMenu.Items.Add(new ToolStripSeparator());
+            var updates = new ToolStripMenuItem("Check for PartLock updates\u2026  (you have v" +
+                PartLock.Platform.Updater.CurrentVersion.ToString(3) + ")");
+            updates.Click += async delegate { await CheckForUpdatesAsync(true); };
+            _accountMenu.Items.Add(updates);
 
             _repoMenu = new ContextMenuStrip { Font = Theme.Base, ShowImageMargin = false };
             var openWeb = new ToolStripMenuItem("Open this repository on GitHub");
@@ -321,6 +328,20 @@ namespace PartLock.UI
             var switchRepo = new ToolStripMenuItem("Switch to another repository\u2026");
             switchRepo.Click += ChangeFolder_LinkClicked;
             _repoMenu.Items.Add(switchRepo);
+            _repoMenu.Items.Add(new ToolStripSeparator());
+            var explorerMenu = new ToolStripMenuItem("Right-click menu in File Explorer") { CheckOnClick = true };
+            explorerMenu.Checked = AppSettings.Load().ExplorerMenu;
+            explorerMenu.ToolTipText = "Check Out / Check In from File Explorer: right-click a CAD file \u2192 PartLock "
+                                     + "(on Windows 11: Show more options).";
+            explorerMenu.CheckedChanged += delegate
+            {
+                AppSettings settings = AppSettings.Load();
+                settings.ExplorerMenu = explorerMenu.Checked;
+                settings.Save();
+                if (explorerMenu.Checked) PartLock.Platform.ShellIntegration.Register(Application.ExecutablePath);
+                else PartLock.Platform.ShellIntegration.Unregister();
+            };
+            _repoMenu.Items.Add(explorerMenu);
         }
 
         private Control BuildChangesBanner()
@@ -662,6 +683,18 @@ namespace PartLock.UI
             };
             _statusStrip.Items.Add(_statusText);
 
+            _updateLink = new ToolStripStatusLabel
+            {
+                IsLink = true,
+                Visible = false,
+                Font = Theme.Small,
+                LinkColor = Theme.Accent,
+                ActiveLinkColor = Theme.AccentHover,
+                Alignment = ToolStripItemAlignment.Right
+            };
+            _updateLink.Click += async delegate { await InstallUpdateAsync(); };
+            _statusStrip.Items.Add(_updateLink);
+
             _progress = new ToolStripProgressBar
             {
                 Style = ProgressBarStyle.Marquee,
@@ -760,6 +793,83 @@ namespace PartLock.UI
                 _initialized = true;
                 _timer.Start();
                 SetBusy(false);
+            }
+
+            await CheckForUpdatesAsync(false);
+        }
+
+        // ------------------------------------------------------------------ updates
+
+        private async Task CheckForUpdatesAsync(bool userAsked)
+        {
+            try
+            {
+                PartLock.Platform.UpdateInfo update =
+                    await PartLock.Platform.Updater.CheckAsync(System.Threading.CancellationToken.None);
+                if (IsDisposed) return;
+                _update = update;
+                if (update == null)
+                {
+                    _updateLink.Visible = false;
+                    if (userAsked)
+                    {
+                        MessageBox.Show(this, "You have the latest PartLock (v" +
+                            PartLock.Platform.Updater.CurrentVersion.ToString(3) + ").",
+                            "PartLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    return;
+                }
+
+                _updateLink.Text = "PartLock " + update.Tag + " is available \u2013 click to update";
+                _updateLink.Visible = true;
+                if (userAsked) await InstallUpdateAsync();
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.LogToFile("Checking for updates failed.", ex.ToString());
+                if (userAsked)
+                {
+                    MessageBox.Show(this, "Couldn't check for updates right now. Check your internet connection and try again.",
+                        "PartLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+        }
+
+        private async Task InstallUpdateAsync()
+        {
+            PartLock.Platform.UpdateInfo update = _update;
+            if (update == null || _busy) return;
+
+            string notes = (update.Notes ?? string.Empty).Trim();
+            if (notes.Length > 700) notes = notes.Substring(0, 700) + "\u2026";
+            DialogResult answer = MessageBox.Show(this,
+                "Update PartLock from v" + PartLock.Platform.Updater.CurrentVersion.ToString(3) + " to " + update.Tag + " now?\n\n"
+                + "PartLock restarts. Your files and check-outs aren't touched."
+                + (notes.Length > 0 ? "\n\nWhat's new:\n" + notes : string.Empty),
+                "PartLock update", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer != DialogResult.Yes) return;
+
+            bool restart = false;
+            bool notWritable = false;
+            await RunBusyAsync("Updating PartLock\u2026", async delegate
+            {
+                bool ok = await PartLock.Platform.Updater.InstallAsync(update, new Progress<string>(AppendLog),
+                    System.Threading.CancellationToken.None);
+                restart = ok;
+                notWritable = !ok;
+            });
+
+            if (restart)
+            {
+                _timer.Stop();
+                Application.Exit();
+            }
+            else if (notWritable)
+            {
+                MessageBox.Show(this, "PartLock can't update itself in the folder it's in (no permission). "
+                    + "The download page will open; replace PartLock.exe with the new one.",
+                    "PartLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                OpenUrl(update.PageUrl);
             }
         }
 
@@ -1029,6 +1139,30 @@ namespace PartLock.UI
 
             List<string> paths = targets.Select(file => file.Path)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            if (paths.Any(PartLock.Platform.SolidWorksRefs.IsAssembly))
+            {
+                List<string> expanded = null;
+                bool cancelled = false;
+                SetBusy(true, "Asking SolidWorks for sub-assemblies\u2026");
+                try
+                {
+                    expanded = await SubAssemblyPrompt.ExpandAsync(this, _vault, _files.ToList(), paths, AppendLog);
+                    cancelled = expanded == null;
+                }
+                catch (Exception ex)
+                {
+                    // Never block a check-out over this; just check out what was picked.
+                    ErrorDialog.LogToFile("Sub-assembly lookup failed.", ex.ToString());
+                    expanded = paths;
+                }
+                finally
+                {
+                    SetBusy(false);
+                }
+                if (cancelled) return;
+                paths = expanded;
+            }
 
             bool done = false;
             await RunBusyAsync("Checking out " + FileCountText(paths.Count) + "\u2026", async delegate

@@ -95,6 +95,8 @@ namespace PartLock.Core
     {
         [DataMember(Name = "name")] public string Name { get; set; }
         [DataMember(Name = "browser_download_url")] public string Url { get; set; }
+        [DataMember(Name = "url")] public string ApiUrl { get; set; }
+        [DataMember(Name = "size")] public long Size { get; set; }
     }
 
     [DataContract]
@@ -102,6 +104,8 @@ namespace PartLock.Core
     {
         [DataMember(Name = "tag_name")] public string Tag { get; set; }
         [DataMember(Name = "assets")] public List<GitHubAssetDto> Assets { get; set; }
+        [DataMember(Name = "body")] public string Body { get; set; }
+        [DataMember(Name = "html_url")] public string HtmlUrl { get; set; }
     }
 
     public static class GitSetup
@@ -390,6 +394,20 @@ namespace PartLock.Core
             return repos;
         }
 
+        /// <summary>The saved GitHub token (no UI), or null when not signed in.</summary>
+        internal static async Task<string> GetStoredTokenAsync(CancellationToken ct)
+        {
+            try
+            {
+                Credential cred = await FillAsync(new GitRunner(null), false, ct).ConfigureAwait(false);
+                return cred == null ? null : cred.Password;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         /// <summary>Forgets the saved GitHub sign-in on this computer (the next start asks again).</summary>
         public static async Task SignOutAsync(CancellationToken ct)
         {
@@ -546,7 +564,7 @@ namespace PartLock.Core
         // Small helpers
         // ------------------------------------------------------------------
 
-        private static async Task<string> GetStringAsync(string url, string token, CancellationToken ct)
+        internal static async Task<string> GetStringAsync(string url, string token, CancellationToken ct)
         {
             var request = (HttpWebRequest)WebRequest.Create(url);
             request.UserAgent = UserAgent;
@@ -571,7 +589,7 @@ namespace PartLock.Core
             }
         }
 
-        private static T Deserialize<T>(string json) where T : class
+        internal static T Deserialize<T>(string json) where T : class
         {
             if (string.IsNullOrEmpty(json)) return null;
             var serializer = new DataContractJsonSerializer(typeof(T));

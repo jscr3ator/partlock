@@ -12,6 +12,12 @@ PartLock is the small app that keeps our SolidWorks files from stepping on each 
 
 **Top-right corner:** the 📁 button shows which repository you're in (click it to open it on GitHub or switch to another one), and the **@you** button shows your GitHub account (click it to switch accounts or change the name on your check-ins).
 
+## Handy extras
+
+- **Check out a whole assembly:** with SolidWorks open, check out the main assembly. PartLock lists its sub-assemblies (ticked) so you can check them all out at once. Parts aren't included; check out the ones you'll edit.
+- **Right-click in File Explorer:** right-click a CAD file in the vault → **PartLock** → Check Out / Check In… / Undo Check Out. (Windows 11: **Show more options** first.)
+- **Updates:** when a new PartLock is out, click the blue "update" link in the bottom-right corner. PartLock updates itself and restarts.
+
 ## The daily loop
 
 > Forgot to Check Out before editing? That's OK. Save the file, close it in SolidWorks, and click **Check In**: PartLock checks it out for you and uploads it, as long as nobody else has it. A blue bar at the top tells you when you have changes that aren't on GitHub yet.
