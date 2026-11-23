@@ -1,0 +1,4 @@
+out/
+.nuget/
+bin/
+obj/
