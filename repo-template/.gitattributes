@@ -1,0 +1,13 @@
+*.[sS][lL][dD][pP][rR][tT] filter=lfs diff=lfs merge=lfs -text lockable
+*.[sS][lL][dD][aA][sS][mM] filter=lfs diff=lfs merge=lfs -text lockable
+*.[sS][lL][dD][dD][rR][wW] filter=lfs diff=lfs merge=lfs -text lockable
+*.[sS][tT][eE][pP] filter=lfs diff=lfs merge=lfs -text lockable
+*.[sS][tT][pP] filter=lfs diff=lfs merge=lfs -text lockable
+*.[iI][gG][eE][sS] filter=lfs diff=lfs merge=lfs -text lockable
+*.[iI][gG][sS] filter=lfs diff=lfs merge=lfs -text lockable
+*.[sS][tT][lL] filter=lfs diff=lfs merge=lfs -text lockable
+*.[xX]_[tT] filter=lfs diff=lfs merge=lfs -text lockable
+*.[dD][xX][fF] filter=lfs diff=lfs merge=lfs -text lockable
+*.[dD][wW][gG] filter=lfs diff=lfs merge=lfs -text lockable
+*.[pP][dD][fF] filter=lfs diff=lfs merge=lfs -text lockable
+*.[3][mM][fF] filter=lfs diff=lfs merge=lfs -text lockable
