@@ -9,6 +9,7 @@
     <AssemblyName>PartLock</AssemblyName>
     <RootNamespace>PartLock</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <Version>0.3.0</Version>
     <Product>PartLock</Product>
@@ -16,6 +17,9 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\logo.png" LogicalName="PartLock.logo.png" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System.Runtime.Serialization" />

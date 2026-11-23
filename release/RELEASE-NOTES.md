@@ -3,6 +3,8 @@
 - **Switch repositories easily.** The repository button shows which GitHub repo you're working in (e.g. `your-team/CAD`). Click it to open the repo on GitHub, show the folder, or **switch to another repository**. You pick from a list of every repo your GitHub account can access, and PartLock downloads it if it isn't on this computer yet. First-time setup uses the same list, so there's no need to paste a link.
 - **Check In works even if you forgot Check Out.** If you edited and saved a part without checking it out first, Check In now checks it out for you and uploads it (as long as nobody else has it and nobody has uploaded a newer version).
 - **You can see what isn't uploaded yet.** PartLock notices saved changes within a couple of seconds. A blue bar says how many files aren't on GitHub yet, with a **Check In now** button. The Check In button turns blue and shows the count.
+- **Search finds file names first.** Typing part of a name lists files whose name starts with it, then files whose name contains it. Folders only match when no file name does, or when you type a path like `cad/`.
+- Team logo in the app header, window icon and the exe.
 - Clearer steps at the top: Get Latest → Check Out → Edit & save → Check In.
 
 ### From v0.2.0

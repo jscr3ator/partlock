@@ -61,6 +61,39 @@ namespace PartLock.UI
         public static readonly Font Mono = MonoFont;
         public static readonly Font Pill = PillFont;
 
+        private static Image _logo;
+        private static Icon _appIcon;
+
+        /// <summary>The team logo embedded in the exe (null if missing).</summary>
+        public static Image Logo
+        {
+            get
+            {
+                if (_logo != null) return _logo;
+                try
+                {
+                    using (var stream = typeof(Theme).Assembly.GetManifestResourceStream("PartLock.logo.png"))
+                    {
+                        if (stream != null) _logo = new Bitmap(Image.FromStream(stream));
+                    }
+                }
+                catch (Exception) { }
+                return _logo;
+            }
+        }
+
+        /// <summary>The exe's own icon, for window title bars and the taskbar.</summary>
+        public static Icon AppIcon
+        {
+            get
+            {
+                if (_appIcon != null) return _appIcon;
+                try { _appIcon = Icon.ExtractAssociatedIcon(System.Windows.Forms.Application.ExecutablePath); }
+                catch (Exception) { }
+                return _appIcon;
+            }
+        }
+
         public static Color FromHex(string hex)
         {
             return ColorTranslator.FromHtml(hex);

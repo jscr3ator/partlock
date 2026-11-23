@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="Design Build Fly logo" width="140"></p>
+
 # PartLock
 
 PartLock is a tiny check-out / check-in tool for a small CAD team: one button to get everyone's latest SolidWorks files, one to lock a part while you edit it, one to publish it back. It wraps Git and Git LFS file locking so nobody on the team has to learn git. Everything lives in a normal private GitHub repository, which gives you full history and free hosting for a student-sized project. It is built for about 15 people sharing one `main` branch — not a full PDM system.

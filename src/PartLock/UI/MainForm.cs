@@ -98,6 +98,7 @@ namespace PartLock.UI
             MinimumSize = new Size(900, 560);
             Size = new Size(1100, 680);
             DoubleBuffered = true;
+            if (Theme.AppIcon != null) Icon = Theme.AppIcon;
 
             BuildUi();
             BuildMenu();
@@ -191,6 +192,27 @@ namespace PartLock.UI
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
+            var brandRow = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                BackColor = Theme.Panel,
+                Margin = new Padding(0)
+            };
+            if (Theme.Logo != null)
+            {
+                brandRow.Controls.Add(new PictureBox
+                {
+                    Image = Theme.Logo,
+                    SizeMode = PictureBoxSizeMode.Zoom,
+                    Size = new Size(52, 52),
+                    BackColor = Theme.Panel,
+                    Margin = new Padding(0, 0, 12, 0)
+                });
+            }
+
             var brand = new FlowLayoutPanel
             {
                 FlowDirection = FlowDirection.TopDown,
@@ -218,7 +240,8 @@ namespace PartLock.UI
                 BackColor = Theme.Panel,
                 Margin = new Padding(0)
             });
-            table.Controls.Add(brand, 0, 0);
+            brandRow.Controls.Add(brand);
+            table.Controls.Add(brandRow, 0, 0);
 
             var right = new FlowLayoutPanel
             {
@@ -422,7 +445,7 @@ namespace PartLock.UI
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(8, 10, 10, 0)
             };
-            Theme.SetCueText(_search, "Search files\u2026");
+            Theme.SetCueText(_search, "Search file names\u2026");
             _search.TextChanged += delegate { ApplyFilter(GetSelectedPaths()); };
             filters.Controls.Add(_search);
 
@@ -1376,13 +1399,32 @@ namespace PartLock.UI
             }
 
             string query = _search == null ? string.Empty : _search.Text.Trim();
+            List<VaultFile> visible;
             if (query.Length > 0)
             {
-                view = view.Where(file => Matches(file, query));
+                // File names come first. Folders / owners only count when no file name matches,
+                // or when the search itself looks like a path ("cad/").
+                bool pathQuery = query.IndexOf('/') >= 0 || query.IndexOf('\\') >= 0;
+                string pathText = query.Replace('\\', '/');
+                List<VaultFile> candidates = view.ToList();
+                List<VaultFile> byName = candidates.Where(file => NameRank(file, query) < 2).ToList();
+                if (byName.Count > 0 && !pathQuery)
+                {
+                    visible = byName;
+                    SortFiles(visible);
+                    visible = visible.OrderBy(file => NameRank(file, query)).ToList(); // stable: keeps column sort within a rank
+                }
+                else
+                {
+                    visible = candidates.Where(file => Matches(file, pathQuery ? pathText : query)).ToList();
+                    SortFiles(visible);
+                }
             }
-
-            List<VaultFile> visible = view.ToList();
-            SortFiles(visible);
+            else
+            {
+                visible = view.ToList();
+                SortFiles(visible);
+            }
 
             var reselect = new List<ListViewItem>();
             _list.BeginUpdate();
@@ -1421,6 +1463,16 @@ namespace PartLock.UI
 
             UpdateEmptyState(visible.Count);
             UpdateActionButtons();
+        }
+
+        /// <summary>0 = name starts with the search, 1 = name contains it, 2 = no name match.</summary>
+        private static int NameRank(VaultFile file, string query)
+        {
+            string name = file == null ? null : file.FileName;
+            if (string.IsNullOrEmpty(name)) return 2;
+            if (name.StartsWith(query, StringComparison.OrdinalIgnoreCase)) return 0;
+            if (name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) return 1;
+            return 2;
         }
 
         private static bool Matches(VaultFile file, string query)

@@ -38,7 +38,7 @@ namespace PartLock.UI
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MinimizeBox = true;
             MaximizeBox = false;
-            ShowIcon = false;
+            if (Theme.AppIcon != null) Icon = Theme.AppIcon;
             ClientSize = new Size(580, 420);
 
             var root = new TableLayoutPanel

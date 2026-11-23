@@ -49,7 +49,7 @@ namespace PartLock.UI
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.Sizable;
             MinimizeBox = false;
-            ShowIcon = false;
+            if (Theme.AppIcon != null) Icon = Theme.AppIcon;
             ClientSize = new Size(780, 600);
             MinimumSize = new Size(640, 480);
 

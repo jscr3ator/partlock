@@ -41,7 +41,7 @@ namespace PartLock.UI
             FormBorderStyle = FormBorderStyle.Sizable;
             MinimizeBox = true;
             MaximizeBox = true;
-            ShowIcon = false;
+            if (Theme.AppIcon != null) Icon = Theme.AppIcon;
             ClientSize = new Size(920, 640);
             MinimumSize = new Size(760, 540);
 
