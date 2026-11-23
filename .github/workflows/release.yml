@@ -1,0 +1,45 @@
+# Publishes the prebuilt app in release/ as a GitHub release, tagged with the
+# <Version> from PartLock.csproj. Re-running replaces that release's files.
+name: Publish release
+
+on:
+  push:
+    paths:
+      - "release/**"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package
+        id: pkg
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/PartLock/PartLock.csproj)
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          dir="PartLock-v$version"
+          mkdir -p "dist/$dir"
+          cp release/PartLock.exe release/PartLock.exe.config docs/TEAM-GUIDE.md docs/ADMIN-SETUP.md "dist/$dir/"
+          (cd dist && zip -r "$dir.zip" "$dir")
+          echo "zip=dist/$dir.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.pkg.outputs.tag }}
+          ZIP: ${{ steps.pkg.outputs.zip }}
+        run: |
+          files="$ZIP release/PartLock.exe release/PartLock.exe.config"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "PartLock $TAG" --notes-file release/RELEASE-NOTES.md --latest
+            gh release upload "$TAG" $files --clobber
+          else
+            gh release create "$TAG" $files --title "PartLock $TAG" \
+              --notes-file release/RELEASE-NOTES.md --target "$GITHUB_SHA" --latest
+          fi
