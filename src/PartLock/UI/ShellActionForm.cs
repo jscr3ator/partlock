@@ -185,7 +185,8 @@ namespace PartLock.UI
                 await _vault.CheckOutAsync(new[] { file.Path });
             }
             _status.Text = "Checking in…";
-            await _vault.CheckInAsync(new[] { file.Path }, message, keep);
+            List<string> toCommit = await SubAssemblyPrompt.AddSavedListsAsync(_vault, new List<string> { file.Path });
+            await _vault.CheckInAsync(toCommit, message, keep);
             return file.FileName + " is checked in and uploaded to GitHub.";
         }
 

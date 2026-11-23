@@ -39,18 +39,17 @@ namespace PartLock.UI
 
             foreach (string assembly in assemblies)
             {
-                string full = Path.Combine(vault.RepoRoot, assembly.Replace('/', Path.DirectorySeparatorChar));
-                List<string> deps = await SolidWorksRefs.GetDependenciesAsync(full, TimeSpan.FromSeconds(20));
-                if (deps == null)
+                List<string> subs = await FindSubAssembliesAsync(vault.RepoRoot, assembly, log);
+                if (subs == null)
                 {
                     if (log != null)
-                        log("SolidWorks isn't open (or didn't answer), so only " + Path.GetFileName(assembly) +
-                            " was checked out. Open SolidWorks first to also check out its sub-assemblies.");
+                        log("Couldn't find the sub-assemblies of " + Path.GetFileName(assembly) +
+                            " (SolidWorks isn't installed or didn't answer), so only the assembly was checked out.");
                     continue;
                 }
                 askedSolidWorks = true;
 
-                foreach (string sub in SolidWorksRefs.SubAssembliesInVault(deps, vault.RepoRoot, assembly))
+                foreach (string sub in subs)
                 {
                     if (chosen.Contains(sub) || offer.Contains(sub, StringComparer.OrdinalIgnoreCase)) continue;
                     VaultFile file;
@@ -78,6 +77,83 @@ namespace PartLock.UI
                 var result = new List<string>(paths);
                 if (answer == DialogResult.Yes) result.AddRange(dialog.Ticked);
                 return result;
+            }
+        }
+
+        /// <summary>
+        /// Sub-assemblies (repo-relative) of one assembly. Tries, in order: an open SolidWorks
+        /// (instant), the list saved in the vault for this exact version of the assembly, then a
+        /// hidden SolidWorks started just for this (slow the first time). Null when none worked.
+        /// </summary>
+        public static async Task<List<string>> FindSubAssembliesAsync(string repoRoot, string assembly, Action<string> log)
+        {
+            string full = Path.Combine(repoRoot, assembly.Replace('/', Path.DirectorySeparatorChar));
+
+            List<string> deps = await SolidWorksRefs.GetDependenciesAsync(full, TimeSpan.FromSeconds(20));
+            if (deps != null) return SolidWorksRefs.SubAssembliesInVault(deps, repoRoot, assembly);
+
+            List<string> saved = SolidWorksRefs.ReadCache(repoRoot, assembly);
+            if (saved != null)
+            {
+                return saved.Where(p => File.Exists(Path.Combine(repoRoot, p.Replace('/', Path.DirectorySeparatorChar))))
+                            .ToList();
+            }
+
+            if (!SolidWorksRefs.IsInstalled) return null;
+            if (log != null)
+                log("Starting SolidWorks in the background to find the sub-assemblies of " + Path.GetFileName(assembly) +
+                    " (can take a minute; it closes again afterwards)\u2026");
+            deps = await SolidWorksRefs.GetDependenciesAsync(full, TimeSpan.FromMinutes(3), true);
+            return deps == null ? null : SolidWorksRefs.SubAssembliesInVault(deps, repoRoot, assembly);
+        }
+
+        /// <summary>
+        /// Before checking in assemblies: if SolidWorks is open, save each assembly's sub-assembly
+        /// list in the vault (.partlock/refs) so teammates can check out sub-assemblies without
+        /// SolidWorks. Returns the paths to check in (the originals plus any saved lists). Never throws.
+        /// </summary>
+        public static async Task<List<string>> AddSavedListsAsync(IVaultService vault, List<string> paths)
+        {
+            var result = new List<string>(paths);
+            try
+            {
+                if (!(vault is VaultService) || !paths.Any(SolidWorksRefs.IsAssembly) || !SolidWorksRefs.IsRunning)
+                    return result;
+
+                foreach (string assembly in paths.Where(SolidWorksRefs.IsAssembly).ToList())
+                {
+                    string full = Path.Combine(vault.RepoRoot, assembly.Replace('/', Path.DirectorySeparatorChar));
+                    if (!File.Exists(full)) continue;
+                    List<string> deps = await SolidWorksRefs.GetDependenciesAsync(full, TimeSpan.FromSeconds(20));
+                    if (deps == null) continue;
+
+                    string cacheRel = SolidWorksRefs.CacheRelativePath(assembly);
+                    if (await IsLockableAsync(vault.RepoRoot, cacheRel)) continue; // would need a check-out of its own
+
+                    string written = SolidWorksRefs.WriteCache(vault.RepoRoot, assembly,
+                        SolidWorksRefs.SubAssembliesInVault(deps, vault.RepoRoot, assembly));
+                    if (written != null && !result.Contains(written, StringComparer.OrdinalIgnoreCase)) result.Add(written);
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.LogToFile("Saving sub-assembly lists failed.", ex.ToString());
+            }
+            return result;
+        }
+
+        private static async Task<bool> IsLockableAsync(string repoRoot, string relative)
+        {
+            try
+            {
+                GitResult r = await new GitRunner(null).RunAsync(repoRoot,
+                    new[] { "check-attr", "lockable", "--", relative }, System.Threading.CancellationToken.None, null, false, 30000);
+                string text = (r.StdOut ?? string.Empty).Trim();
+                return !r.Success || !(text.EndsWith(": unspecified") || text.EndsWith(": unset"));
+            }
+            catch (Exception)
+            {
+                return true; // unsure: don't risk it
             }
         }
     }

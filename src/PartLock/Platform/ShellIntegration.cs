@@ -84,6 +84,78 @@ namespace PartLock.Platform
             return true;
         }
 
+        // ------------------------------------------------------------------
+        // Windows 11: show the full right-click menu right away (no "Show more options").
+        // Third-party entries only appear in Windows 11's short menu for signed, packaged apps,
+        // so instead PartLock can switch this user's Explorer back to the full menu. It's the
+        // standard per-user setting (an empty InprocServer32 for this CLSID) and fully reversible.
+        // ------------------------------------------------------------------
+
+        private const string ClassicMenuKey =
+            @"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}";
+
+        public static bool IsWindows11
+        {
+            get
+            {
+                try
+                {
+                    using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+                    {
+                        int build;
+                        return key != null && int.TryParse(Convert.ToString(key.GetValue("CurrentBuildNumber")), out build) && build >= 22000;
+                    }
+                }
+                catch (Exception) { return false; }
+            }
+        }
+
+        public static bool FullMenuEnabled
+        {
+            get
+            {
+                try
+                {
+                    using (RegistryKey key = Registry.CurrentUser.OpenSubKey(ClassicMenuKey + @"\InprocServer32"))
+                        return key != null;
+                }
+                catch (Exception) { return false; }
+            }
+        }
+
+        /// <summary>Turns the full right-click menu on/off for this user and restarts File Explorer so it applies.</summary>
+        public static void SetFullMenu(bool enabled)
+        {
+            if (enabled)
+            {
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(ClassicMenuKey + @"\InprocServer32"))
+                {
+                    if (key != null) key.SetValue(string.Empty, string.Empty, RegistryValueKind.String);
+                }
+            }
+            else
+            {
+                Registry.CurrentUser.DeleteSubKeyTree(ClassicMenuKey, false);
+            }
+            RestartExplorer();
+        }
+
+        private static void RestartExplorer()
+        {
+            try
+            {
+                foreach (System.Diagnostics.Process p in System.Diagnostics.Process.GetProcessesByName("explorer"))
+                {
+                    try { p.Kill(); p.WaitForExit(5000); } catch (Exception) { }
+                }
+                System.Threading.Thread.Sleep(800);
+                // Windows usually restarts the shell by itself; start it if it didn't.
+                if (System.Diagnostics.Process.GetProcessesByName("explorer").Length == 0)
+                    System.Diagnostics.Process.Start("explorer.exe");
+            }
+            catch (Exception) { }
+        }
+
         [DllImport("shell32.dll")]
         private static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
 

@@ -15,6 +15,9 @@ namespace PartLock
         /// <summary>Show the "PartLock" right-click menu on CAD files in File Explorer (default on).</summary>
         public bool ExplorerMenu { get; set; } = true;
 
+        /// <summary>Whether PartLock already offered the Windows 11 full right-click menu.</summary>
+        public bool FullMenuAsked { get; set; }
+
         /// <summary>Every vault folder PartLock has opened on this computer (for the repo switcher).</summary>
         public System.Collections.Generic.List<string> KnownRepos { get; } =
             new System.Collections.Generic.List<string>();
@@ -63,6 +66,10 @@ namespace PartLock
                     {
                         settings.ExplorerMenu = !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
                     }
+                    else if (string.Equals(key, "fullMenuAsked", StringComparison.OrdinalIgnoreCase))
+                    {
+                        settings.FullMenuAsked = string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+                    }
                     else if (string.Equals(key, "knownRepo", StringComparison.OrdinalIgnoreCase) && value.Length > 0 &&
                              !settings.KnownRepos.Exists(p => string.Equals(p, value, StringComparison.OrdinalIgnoreCase)))
                     {
@@ -92,6 +99,7 @@ namespace PartLock
                     text.AppendLine("repoPath=" + RepoPath);
                 }
                 if (!ExplorerMenu) text.AppendLine("explorerMenu=off");
+                if (FullMenuAsked) text.AppendLine("fullMenuAsked=yes");
                 foreach (string known in KnownRepos)
                 {
                     if (!string.IsNullOrEmpty(known)) text.AppendLine("knownRepo=" + known);

@@ -342,6 +342,15 @@ namespace PartLock.UI
                 else PartLock.Platform.ShellIntegration.Unregister();
             };
             _repoMenu.Items.Add(explorerMenu);
+            if (PartLock.Platform.ShellIntegration.IsWindows11)
+            {
+                var fullMenu = new ToolStripMenuItem("Show PartLock right away (skip \u201CShow more options\u201D)")
+                {
+                    Checked = PartLock.Platform.ShellIntegration.FullMenuEnabled
+                };
+                fullMenu.Click += delegate { fullMenu.Checked = AskFullMenu(!fullMenu.Checked); };
+                _repoMenu.Items.Add(fullMenu);
+            }
         }
 
         private Control BuildChangesBanner()
@@ -795,7 +804,46 @@ namespace PartLock.UI
                 SetBusy(false);
             }
 
+            if (_vault is VaultService) OfferFullMenuOnce();
             await CheckForUpdatesAsync(false);
+        }
+
+        // ------------------------------------------------------------------ Windows 11 menu
+
+        /// <summary>Asks, then turns the full right-click menu on/off. Returns the resulting state.</summary>
+        private bool AskFullMenu(bool enable)
+        {
+            string text = enable
+                ? "Windows 11 hides PartLock (and most apps) under \u201CShow more options\u201D when you right-click a file.\n\n"
+                  + "PartLock can switch File Explorer to the full right-click menu so PartLock \u2192 Check Out / Check In "
+                  + "shows up straight away. This affects every right-click menu for your Windows account, and you can switch "
+                  + "it back any time from the \U0001F4C1 menu.\n\nFile Explorer restarts for a moment (open Explorer windows close). Switch now?"
+                : "Switch File Explorer back to the Windows 11 short right-click menu? PartLock will be under \u201CShow more options\u201D again.\n\n"
+                  + "File Explorer restarts for a moment.";
+            DialogResult answer = MessageBox.Show(this, text, "PartLock", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer == DialogResult.Yes)
+            {
+                try { PartLock.Platform.ShellIntegration.SetFullMenu(enable); }
+                catch (Exception ex) { ErrorDialog.ShowException(this, ex); }
+            }
+            return PartLock.Platform.ShellIntegration.FullMenuEnabled;
+        }
+
+        private void OfferFullMenuOnce()
+        {
+            try
+            {
+                if (!PartLock.Platform.ShellIntegration.IsWindows11 || PartLock.Platform.ShellIntegration.FullMenuEnabled) return;
+                AppSettings settings = AppSettings.Load();
+                if (!settings.ExplorerMenu || settings.FullMenuAsked) return;
+                settings.FullMenuAsked = true;
+                settings.Save();
+                AskFullMenu(true);
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.LogToFile("Offering the full right-click menu failed.", ex.ToString());
+            }
         }
 
         // ------------------------------------------------------------------ updates
@@ -1144,7 +1192,7 @@ namespace PartLock.UI
             {
                 List<string> expanded = null;
                 bool cancelled = false;
-                SetBusy(true, "Asking SolidWorks for sub-assemblies\u2026");
+                SetBusy(true, "Finding sub-assemblies\u2026");
                 try
                 {
                     expanded = await SubAssemblyPrompt.ExpandAsync(this, _vault, _files.ToList(), paths, AppendLog);
@@ -1277,7 +1325,8 @@ namespace PartLock.UI
                     AppendLog("Checking out " + FileCountText(needCheckOut.Count) + " you edited without checking out first\u2026");
                     await _vault.CheckOutAsync(needCheckOut);
                 }
-                await _vault.CheckInAsync(paths, message, keepCheckedOut);
+                List<string> toCommit = await SubAssemblyPrompt.AddSavedListsAsync(_vault, paths);
+                await _vault.CheckInAsync(toCommit, message, keepCheckedOut);
                 await ReloadAsync(false);
             });
         }

@@ -2,7 +2,12 @@
 //
 // Uses ISldWorks.GetDocumentDependencies2 through late-bound IDispatch (no SolidWorks
 // interop DLLs needed, works with any SolidWorks version). Only talks to a SolidWorks
-// that is already running: PartLock never starts SolidWorks on its own.
+// that is already running, unless the caller asks it to start a hidden SolidWorks
+// (which is closed again afterwards).
+//
+// Lists are also saved in the vault (.partlock/refs/<assembly path>.txt, with the SHA-256 of
+// the assembly they belong to) when an assembly is checked in, so teammates get them without
+// SolidWorks at all.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -19,25 +24,80 @@ namespace PartLock.Platform
         /// Full paths of every file the assembly uses (all levels), or null when SolidWorks
         /// isn't running, didn't answer within <paramref name="timeout"/>, or the call failed.
         /// </summary>
-        public static async Task<List<string>> GetDependenciesAsync(string assemblyPath, TimeSpan timeout)
+        public static async Task<List<string>> GetDependenciesAsync(string assemblyPath, TimeSpan timeout,
+            bool startIfNotRunning = false)
         {
-            Task<List<string>> work = Task.Run(() => Query(assemblyPath));
+            var before = new HashSet<int>();
+            if (startIfNotRunning)
+            {
+                try { foreach (var p in System.Diagnostics.Process.GetProcessesByName("SLDWORKS")) before.Add(p.Id); }
+                catch (Exception) { }
+            }
+
+            Task<List<string>> work = Task.Run(() => Query(assemblyPath, startIfNotRunning));
             Task done = await Task.WhenAny(work, Task.Delay(timeout)).ConfigureAwait(false);
-            if (done != work) return null; // SolidWorks busy (e.g. a dialog is open); give up quietly
+            if (done != work)
+            {
+                // SolidWorks busy (e.g. a dialog is open); give up quietly. If we started a hidden
+                // SolidWorks that got stuck (license prompt etc.), don't leave it running.
+                if (startIfNotRunning && before.Count == 0)
+                {
+                    try
+                    {
+                        foreach (var p in System.Diagnostics.Process.GetProcessesByName("SLDWORKS"))
+                            if (!before.Contains(p.Id)) { try { p.Kill(); } catch (Exception) { } }
+                    }
+                    catch (Exception) { }
+                }
+                return null;
+            }
             try { return await work.ConfigureAwait(false); }
             catch (Exception) { return null; }
         }
 
-        private static List<string> Query(string assemblyPath)
+        /// <summary>True when SolidWorks is installed (registered for automation) on this PC.</summary>
+        public static bool IsInstalled
         {
-            object sw;
+            get
+            {
+                try { return Type.GetTypeFromProgID("SldWorks.Application", false) != null; }
+                catch (Exception) { return false; }
+            }
+        }
+
+        public static bool IsRunning
+        {
+            get
+            {
+                try { object o = Marshal.GetActiveObject("SldWorks.Application"); Marshal.ReleaseComObject(o); return true; }
+                catch (Exception) { return false; }
+            }
+        }
+
+        private static List<string> Query(string assemblyPath, bool startIfNotRunning)
+        {
+            object sw = null;
+            bool startedByUs = false;
             try
             {
                 sw = Marshal.GetActiveObject("SldWorks.Application");
             }
             catch (Exception)
             {
-                return null; // not running
+                if (!startIfNotRunning) return null; // not running
+                try
+                {
+                    Type type = Type.GetTypeFromProgID("SldWorks.Application", false);
+                    if (type == null) return null; // not installed
+                    sw = Activator.CreateInstance(type);
+                    startedByUs = true;
+                    try { sw.GetType().InvokeMember("Visible", BindingFlags.SetProperty, null, sw, new object[] { false }); }
+                    catch (Exception) { }
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
             }
 
             try
@@ -61,7 +121,85 @@ namespace PartLock.Platform
             }
             finally
             {
+                if (startedByUs)
+                {
+                    try { sw.GetType().InvokeMember("ExitApp", BindingFlags.InvokeMethod, null, sw, null); }
+                    catch (Exception) { }
+                }
                 try { Marshal.ReleaseComObject(sw); } catch (Exception) { }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Saved lists in the vault
+        // ------------------------------------------------------------------
+
+        public const string CacheFolder = ".partlock/refs";
+
+        public static string CacheRelativePath(string assemblyRelative)
+        {
+            return CacheFolder + "/" + assemblyRelative.Replace('\\', '/') + ".txt";
+        }
+
+        public static string FileHash(string fullPath)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (FileStream stream = File.OpenRead(fullPath))
+            {
+                byte[] hash = sha.ComputeHash(stream);
+                var sb = new System.Text.StringBuilder(hash.Length * 2);
+                foreach (byte b in hash) sb.Append(b.ToString("x2"));
+                return sb.ToString();
+            }
+        }
+
+        /// <summary>The saved sub-assembly list for this exact version of the assembly, or null.</summary>
+        public static List<string> ReadCache(string repoRoot, string assemblyRelative)
+        {
+            try
+            {
+                string cache = Path.Combine(repoRoot, CacheRelativePath(assemblyRelative).Replace('/', Path.DirectorySeparatorChar));
+                string assembly = Path.Combine(repoRoot, assemblyRelative.Replace('/', Path.DirectorySeparatorChar));
+                if (!File.Exists(cache) || !File.Exists(assembly)) return null;
+
+                string[] lines = File.ReadAllLines(cache);
+                string expected = null;
+                var subs = new List<string>();
+                foreach (string raw in lines)
+                {
+                    string line = raw.Trim();
+                    if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
+                    if (line.StartsWith("sha256=", StringComparison.OrdinalIgnoreCase)) { expected = line.Substring(7).Trim(); continue; }
+                    subs.Add(line.Replace('\\', '/'));
+                }
+                if (expected == null || !string.Equals(expected, FileHash(assembly), StringComparison.OrdinalIgnoreCase)) return null;
+                return subs;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Saves the list; returns the cache file's repo-relative path, or null on failure.</summary>
+        public static string WriteCache(string repoRoot, string assemblyRelative, IEnumerable<string> subAssemblies)
+        {
+            try
+            {
+                string rel = CacheRelativePath(assemblyRelative);
+                string cache = Path.Combine(repoRoot, rel.Replace('/', Path.DirectorySeparatorChar));
+                string assembly = Path.Combine(repoRoot, assemblyRelative.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(cache));
+                var text = new System.Text.StringBuilder();
+                text.AppendLine("# Sub-assemblies of " + assemblyRelative + " (written by PartLock; safe to delete)");
+                text.AppendLine("sha256=" + FileHash(assembly));
+                foreach (string sub in subAssemblies) text.AppendLine(sub);
+                File.WriteAllText(cache, text.ToString(), new System.Text.UTF8Encoding(false));
+                return rel;
+            }
+            catch (Exception)
+            {
+                return null;
             }
         }
 
