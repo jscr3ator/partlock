@@ -2,3 +2,4 @@ out/
 .nuget/
 bin/
 obj/
+.home/
