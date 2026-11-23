@@ -14,7 +14,7 @@ PartLock is the small app that keeps our SolidWorks files from stepping on each 
 
 ## Handy extras
 
-- **Check out a whole assembly:** check out the main assembly and PartLock lists its sub-assemblies (ticked) so you can check them all out at once. SolidWorks doesn't need to be open (PartLock uses a saved list, or starts SolidWorks hidden for a moment). Parts aren't included; check out the ones you'll edit.
+- **Check out a whole assembly:** check out the main assembly and PartLock lists every sub-assembly and part it uses (all ticked) so you can check them all out at once; untick any you won't edit. SolidWorks doesn't need to be open (PartLock uses a saved list, or starts SolidWorks hidden for a moment).
 - **Right-click in File Explorer:** right-click a CAD file in the vault → **PartLock** → Check Out / Check In… / Undo Check Out. (Windows 11: it's under **Show more options**, or hold **Shift** while right-clicking.)
 - **Updates:** when a new PartLock is out, click the blue "update" link in the bottom-right corner. PartLock updates itself and restarts.
 

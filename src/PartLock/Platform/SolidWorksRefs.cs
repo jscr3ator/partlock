@@ -164,14 +164,21 @@ namespace PartLock.Platform
 
                 string[] lines = File.ReadAllLines(cache);
                 string expected = null;
+                bool includesParts = false;
                 var subs = new List<string>();
                 foreach (string raw in lines)
                 {
                     string line = raw.Trim();
                     if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
                     if (line.StartsWith("sha256=", StringComparison.OrdinalIgnoreCase)) { expected = line.Substring(7).Trim(); continue; }
+                    if (line.StartsWith("includes=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        includesParts = line.IndexOf("parts", StringComparison.OrdinalIgnoreCase) >= 0;
+                        continue;
+                    }
                     subs.Add(line.Replace('\\', '/'));
                 }
+                if (!includesParts) return null; // saved by v0.5.x (sub-assemblies only): look it up again
                 if (expected == null || !string.Equals(expected, FileHash(assembly), StringComparison.OrdinalIgnoreCase)) return null;
                 return subs;
             }
@@ -191,8 +198,9 @@ namespace PartLock.Platform
                 string assembly = Path.Combine(repoRoot, assemblyRelative.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(cache));
                 var text = new System.Text.StringBuilder();
-                text.AppendLine("# Sub-assemblies of " + assemblyRelative + " (written by PartLock; safe to delete)");
+                text.AppendLine("# Sub-assemblies and parts of " + assemblyRelative + " (written by PartLock; safe to delete)");
                 text.AppendLine("sha256=" + FileHash(assembly));
+                text.AppendLine("includes=subassemblies,parts");
                 foreach (string sub in subAssemblies) text.AppendLine(sub);
                 File.WriteAllText(cache, text.ToString(), new System.Text.UTF8Encoding(false));
                 return rel;
@@ -209,8 +217,32 @@ namespace PartLock.Platform
                    path.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase);
         }
 
+        public static bool IsPart(string path)
+        {
+            return !string.IsNullOrEmpty(path) &&
+                   path.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Repo-relative, forward-slash paths of the sub-assemblies and parts that are real files
+        /// inside the vault (sub-assemblies first, then parts, each in SolidWorks' order).
+        /// </summary>
+        public static List<string> ComponentsInVault(IEnumerable<string> dependencies, string repoRoot, string mainAssemblyRelative)
+        {
+            var list = dependencies == null ? new List<string>() : new List<string>(dependencies);
+            var result = SubAssembliesInVault(list, repoRoot, mainAssemblyRelative);
+            result.AddRange(FilesInVault(list, repoRoot, mainAssemblyRelative, IsPart));
+            return result;
+        }
+
         /// <summary>Repo-relative, forward-slash paths of the sub-assemblies that are real files inside the vault.</summary>
         public static List<string> SubAssembliesInVault(IEnumerable<string> dependencies, string repoRoot, string mainAssemblyRelative)
+        {
+            return FilesInVault(dependencies, repoRoot, mainAssemblyRelative, IsAssembly);
+        }
+
+        private static List<string> FilesInVault(IEnumerable<string> dependencies, string repoRoot, string mainAssemblyRelative,
+            Func<string, bool> kind)
         {
             var result = new List<string>();
             if (dependencies == null || string.IsNullOrEmpty(repoRoot)) return result;
@@ -219,7 +251,7 @@ namespace PartLock.Platform
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string dep in dependencies)
             {
-                if (!IsAssembly(dep)) continue;
+                if (!kind(dep)) continue;
                 string full;
                 try { full = Path.GetFullPath(dep); }
                 catch (Exception) { continue; }

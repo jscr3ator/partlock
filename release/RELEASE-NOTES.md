@@ -1,4 +1,9 @@
-## What's new in v0.5.1
+## What's new in v0.6.0
+- **Checking out an assembly now includes its parts too, not just sub-assemblies.** PartLock lists every sub-assembly and part the assembly uses (all levels), all ticked and labelled *Sub-assembly* / *Part*. Click **Check out all ticked** (or untick any you won't edit). Anything someone else has checked out is listed and skipped. Toolbox/library files outside the vault and virtual/imported parts stored inside the assembly aren't included.
+- Works without SolidWorks open, same as v0.5 (open SolidWorks → saved list → hidden SolidWorks). Lists saved by v0.5 only had sub-assemblies, so those are looked up again once.
+- Checking out many files (e.g. a whole aircraft, ~40 files) can take a minute.
+
+## v0.5.1
 - **Sub-assemblies without opening SolidWorks.** Checking out an assembly now finds its sub-assemblies even when SolidWorks is closed:
   1. If SolidWorks is open, it's asked directly (instant).
   2. Otherwise PartLock uses the **saved list** for that exact version of the assembly. The list is saved in the vault (`.partlock/refs/`) whenever someone checks in an assembly while SolidWorks is open, so teammates get it for free.
@@ -17,7 +22,7 @@
 - v0.2.0: installs Git for you, requires GitHub sign-in.
 
 ## Download
-- **PartLock-v0.5.1.zip**: unzip anywhere and run `PartLock.exe`, or
+- **PartLock-v0.6.0.zip**: unzip anywhere and run `PartLock.exe`, or
 - **PartLock.exe**: the app on its own.
 
 ## Requirements

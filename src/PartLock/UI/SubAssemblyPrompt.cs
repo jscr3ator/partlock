@@ -43,7 +43,7 @@ namespace PartLock.UI
                 if (subs == null)
                 {
                     if (log != null)
-                        log("Couldn't find the sub-assemblies of " + Path.GetFileName(assembly) +
+                        log("Couldn't find the sub-assemblies and parts of " + Path.GetFileName(assembly) +
                             " (SolidWorks isn't installed or didn't answer), so only the assembly was checked out.");
                     continue;
                 }
@@ -90,7 +90,7 @@ namespace PartLock.UI
             string full = Path.Combine(repoRoot, assembly.Replace('/', Path.DirectorySeparatorChar));
 
             List<string> deps = await SolidWorksRefs.GetDependenciesAsync(full, TimeSpan.FromSeconds(20));
-            if (deps != null) return SolidWorksRefs.SubAssembliesInVault(deps, repoRoot, assembly);
+            if (deps != null) return SolidWorksRefs.ComponentsInVault(deps, repoRoot, assembly);
 
             List<string> saved = SolidWorksRefs.ReadCache(repoRoot, assembly);
             if (saved != null)
@@ -101,10 +101,10 @@ namespace PartLock.UI
 
             if (!SolidWorksRefs.IsInstalled) return null;
             if (log != null)
-                log("Starting SolidWorks in the background to find the sub-assemblies of " + Path.GetFileName(assembly) +
+                log("Starting SolidWorks in the background to find the sub-assemblies and parts of " + Path.GetFileName(assembly) +
                     " (can take a minute; it closes again afterwards)\u2026");
             deps = await SolidWorksRefs.GetDependenciesAsync(full, TimeSpan.FromMinutes(3), true);
-            return deps == null ? null : SolidWorksRefs.SubAssembliesInVault(deps, repoRoot, assembly);
+            return deps == null ? null : SolidWorksRefs.ComponentsInVault(deps, repoRoot, assembly);
         }
 
         /// <summary>
@@ -131,7 +131,7 @@ namespace PartLock.UI
                     if (await IsLockableAsync(vault.RepoRoot, cacheRel)) continue; // would need a check-out of its own
 
                     string written = SolidWorksRefs.WriteCache(vault.RepoRoot, assembly,
-                        SolidWorksRefs.SubAssembliesInVault(deps, vault.RepoRoot, assembly));
+                        SolidWorksRefs.ComponentsInVault(deps, vault.RepoRoot, assembly));
                     if (written != null && !result.Contains(written, StringComparer.OrdinalIgnoreCase)) result.Add(written);
                 }
             }
@@ -166,7 +166,7 @@ namespace PartLock.UI
         public SubAssemblyDialog(List<string> assemblies, List<string> offer, List<string> takenByOthers)
         {
             _paths = offer;
-            Text = "PartLock – Sub-assemblies";
+            Text = "PartLock – Sub-assemblies and parts";
             Font = Theme.Base;
             BackColor = Theme.Panel;
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -198,8 +198,8 @@ namespace PartLock.UI
             root.Controls.Add(new Label
             {
                 Text = offer.Count > 0
-                    ? names + " uses these sub-assemblies. Check them out too?"
-                    : names + " uses sub-assemblies that you can't check out right now.",
+                    ? names + " uses these sub-assemblies and parts (" + offer.Count + "). They're all ticked – untick any you won't edit."
+                    : names + " uses sub-assemblies and parts that you can't check out right now.",
                 Font = Theme.Heading,
                 ForeColor = Theme.Text,
                 AutoSize = true,
@@ -216,15 +216,14 @@ namespace PartLock.UI
                 Font = Theme.Base,
                 Margin = new Padding(0)
             };
-            foreach (string path in offer) _list.Items.Add(path, true);
+            foreach (string path in offer) _list.Items.Add(new Entry(path), true);
             root.Controls.Add(_list, 0, 1);
 
             root.Controls.Add(new Label
             {
                 Text = takenByOthers.Count == 0
-                    ? "Parts aren't included – check those out separately if you'll edit them."
-                    : "Skipped (someone else has them): " + string.Join(", ", takenByOthers.ToArray()) +
-                      ". Parts aren't included either.",
+                    ? "Toolbox / library files outside the vault aren't included. Checking out many files can take a minute."
+                    : "Skipped (someone else has them): " + string.Join(", ", takenByOthers.ToArray()) + ".",
                 Font = Theme.Small,
                 ForeColor = takenByOthers.Count == 0 ? Theme.Muted : Theme.Warning,
                 AutoSize = true,
@@ -240,7 +239,7 @@ namespace PartLock.UI
                 AutoSize = true,
                 Margin = new Padding(0)
             };
-            var yes = Theme.CreateButton(offer.Count > 0 ? "Check out ticked too" : "Continue", ButtonKind.Primary);
+            var yes = Theme.CreateButton(offer.Count > 0 ? "Check out all ticked" : "Continue", ButtonKind.Primary);
             yes.DialogResult = offer.Count > 0 ? DialogResult.Yes : DialogResult.No;
             yes.Margin = new Padding(0);
             buttons.Controls.Add(yes);
@@ -262,12 +261,26 @@ namespace PartLock.UI
             CancelButton = cancel;
         }
 
+        private sealed class Entry
+        {
+            public Entry(string path) { Path = path; }
+            public string Path { get; private set; }
+            public override string ToString()
+            {
+                return (SolidWorksRefs.IsAssembly(Path) ? "Sub-assembly:  " : "Part:  ") + Path;
+            }
+        }
+
         public List<string> Ticked
         {
             get
             {
                 var result = new List<string>();
-                foreach (object item in _list.CheckedItems) result.Add(item as string);
+                foreach (object item in _list.CheckedItems)
+                {
+                    var entry = item as Entry;
+                    if (entry != null) result.Add(entry.Path);
+                }
                 return result.Where(p => !string.IsNullOrEmpty(p)).ToList();
             }
         }

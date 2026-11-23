@@ -133,7 +133,7 @@ namespace PartLock.UI
             var paths = new List<string> { file.Path };
             if (PartLock.Platform.SolidWorksRefs.IsAssembly(file.Path))
             {
-                _status.Text = "Asking SolidWorks for sub-assemblies…";
+                _status.Text = "Finding sub-assemblies and parts (may start SolidWorks in the background)…";
                 List<string> expanded;
                 try { expanded = await SubAssemblyPrompt.ExpandAsync(this, _vault, files, paths, Log); }
                 catch (Exception ex) { ErrorDialog.LogToFile("Sub-assembly lookup failed.", ex.ToString()); expanded = paths; }

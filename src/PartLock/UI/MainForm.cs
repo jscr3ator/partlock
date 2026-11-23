@@ -1177,7 +1177,7 @@ namespace PartLock.UI
             {
                 List<string> expanded = null;
                 bool cancelled = false;
-                SetBusy(true, "Finding sub-assemblies\u2026");
+                SetBusy(true, "Finding sub-assemblies and parts\u2026");
                 try
                 {
                     expanded = await SubAssemblyPrompt.ExpandAsync(this, _vault, _files.ToList(), paths, AppendLog);
