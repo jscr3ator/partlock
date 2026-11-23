@@ -342,15 +342,6 @@ namespace PartLock.UI
                 else PartLock.Platform.ShellIntegration.Unregister();
             };
             _repoMenu.Items.Add(explorerMenu);
-            if (PartLock.Platform.ShellIntegration.IsWindows11)
-            {
-                var fullMenu = new ToolStripMenuItem("Show PartLock right away (skip \u201CShow more options\u201D)")
-                {
-                    Checked = PartLock.Platform.ShellIntegration.FullMenuEnabled
-                };
-                fullMenu.Click += delegate { fullMenu.Checked = AskFullMenu(!fullMenu.Checked); };
-                _repoMenu.Items.Add(fullMenu);
-            }
         }
 
         private Control BuildChangesBanner()
@@ -804,45 +795,39 @@ namespace PartLock.UI
                 SetBusy(false);
             }
 
-            if (_vault is VaultService) OfferFullMenuOnce();
+            if (_vault is VaultService) RestoreNormalMenuOnce();
             await CheckForUpdatesAsync(false);
         }
 
         // ------------------------------------------------------------------ Windows 11 menu
 
-        /// <summary>Asks, then turns the full right-click menu on/off. Returns the resulting state.</summary>
-        private bool AskFullMenu(bool enable)
-        {
-            string text = enable
-                ? "Windows 11 hides PartLock (and most apps) under \u201CShow more options\u201D when you right-click a file.\n\n"
-                  + "PartLock can switch File Explorer to the full right-click menu so PartLock \u2192 Check Out / Check In "
-                  + "shows up straight away. This affects every right-click menu for your Windows account, and you can switch "
-                  + "it back any time from the \U0001F4C1 menu.\n\nFile Explorer restarts for a moment (open Explorer windows close). Switch now?"
-                : "Switch File Explorer back to the Windows 11 short right-click menu? PartLock will be under \u201CShow more options\u201D again.\n\n"
-                  + "File Explorer restarts for a moment.";
-            DialogResult answer = MessageBox.Show(this, text, "PartLock", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-            if (answer == DialogResult.Yes)
-            {
-                try { PartLock.Platform.ShellIntegration.SetFullMenu(enable); }
-                catch (Exception ex) { ErrorDialog.ShowException(this, ex); }
-            }
-            return PartLock.Platform.ShellIntegration.FullMenuEnabled;
-        }
-
-        private void OfferFullMenuOnce()
+        /// <summary>
+        /// v0.5.0 offered to switch Windows 11 to the full right-click menu. That's been dropped:
+        /// if PartLock switched it on for this user, put the normal Windows 11 menu back (once).
+        /// PartLock stays under "Show more options".
+        /// </summary>
+        private void RestoreNormalMenuOnce()
         {
             try
             {
-                if (!PartLock.Platform.ShellIntegration.IsWindows11 || PartLock.Platform.ShellIntegration.FullMenuEnabled) return;
+                if (!PartLock.Platform.ShellIntegration.IsWindows11) return;
                 AppSettings settings = AppSettings.Load();
-                if (!settings.ExplorerMenu || settings.FullMenuAsked) return;
-                settings.FullMenuAsked = true;
+                if (settings.FullMenuReverted) return;
+                bool partLockTurnedItOn = settings.FullMenuAsked && PartLock.Platform.ShellIntegration.FullMenuEnabled;
+                settings.FullMenuReverted = true;
                 settings.Save();
-                AskFullMenu(true);
+                if (!partLockTurnedItOn) return;
+
+                MessageBox.Show(this,
+                    "PartLock is putting your right-click menu back to the normal Windows 11 menu. "
+                    + "PartLock's Check Out / Check In stay under \u201CShow more options\u201D (or Shift+right-click).\n\n"
+                    + "File Explorer will refresh for a second.",
+                    "PartLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                PartLock.Platform.ShellIntegration.SetFullMenu(false);
             }
             catch (Exception ex)
             {
-                ErrorDialog.LogToFile("Offering the full right-click menu failed.", ex.ToString());
+                ErrorDialog.LogToFile("Restoring the normal right-click menu failed.", ex.ToString());
             }
         }
 

@@ -18,6 +18,9 @@ namespace PartLock
         /// <summary>Whether PartLock already offered the Windows 11 full right-click menu.</summary>
         public bool FullMenuAsked { get; set; }
 
+        /// <summary>Whether the v0.5.0 full-menu switch has been undone (done once, in v0.5.1).</summary>
+        public bool FullMenuReverted { get; set; }
+
         /// <summary>Every vault folder PartLock has opened on this computer (for the repo switcher).</summary>
         public System.Collections.Generic.List<string> KnownRepos { get; } =
             new System.Collections.Generic.List<string>();
@@ -66,6 +69,10 @@ namespace PartLock
                     {
                         settings.ExplorerMenu = !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
                     }
+                    else if (string.Equals(key, "fullMenuReverted", StringComparison.OrdinalIgnoreCase))
+                    {
+                        settings.FullMenuReverted = string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+                    }
                     else if (string.Equals(key, "fullMenuAsked", StringComparison.OrdinalIgnoreCase))
                     {
                         settings.FullMenuAsked = string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
@@ -100,6 +107,7 @@ namespace PartLock
                 }
                 if (!ExplorerMenu) text.AppendLine("explorerMenu=off");
                 if (FullMenuAsked) text.AppendLine("fullMenuAsked=yes");
+                if (FullMenuReverted) text.AppendLine("fullMenuReverted=yes");
                 foreach (string known in KnownRepos)
                 {
                     if (!string.IsNullOrEmpty(known)) text.AppendLine("knownRepo=" + known);
