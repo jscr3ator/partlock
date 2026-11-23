@@ -8,9 +8,14 @@ PartLock is the small app that keeps our SolidWorks files from stepping on each 
 2. Run **`PartLock.exe`**. There is nothing to install; keep it anywhere handy (Desktop is fine).
 3. If Git isn't on your computer yet, PartLock offers to **install Git for Windows** for you. Click **Install Git** and say **Yes** when Windows asks for permission. (Prefer to do it yourself? Get it from <https://git-scm.com/download/win> and keep the default options.)
 4. PartLock then asks you to **Sign in to GitHub**. Click **Sign in with GitHub**; your browser (or a small Git Credential Manager window) opens. Sign in with your **own** GitHub account and approve. PartLock won't continue until you're signed in, and you only do this once per computer. Your commit name and email are filled in from your GitHub account if they aren't set yet.
-5. Paste the repository URL your lead gave you (it looks like `https://github.com/your-org/cad.git`), choose a folder (the default under `Documents` is fine) and click **Download**.
+5. Pick your team's repository from the list (it shows every GitHub repo your account can open) and click **Download & open**. Not in the list? Ask your lead to add your GitHub account, or use **Paste a link…**.
+
+**Top-right corner:** the 📁 button shows which repository you're in (click it to open it on GitHub or switch to another one), and the **@you** button shows your GitHub account (click it to switch accounts or change the name on your check-ins).
 
 ## The daily loop
+
+> Forgot to Check Out before editing? That's OK. Save the file, close it in SolidWorks, and click **Check In**: PartLock checks it out for you and uploads it, as long as nobody else has it. A blue bar at the top tells you when you have changes that aren't on GitHub yet.
+
 
 1. **Get Latest** — at the start of every session, and before you check anything out.
 2. **Check Out** the part(s) you are about to edit. This locks them so nobody else can change them and makes your copy writable.

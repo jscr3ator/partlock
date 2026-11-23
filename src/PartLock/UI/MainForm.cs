@@ -63,7 +63,22 @@ namespace PartLock.UI
         private int _sortColumn;
         private bool _sortAscending = true;
 
-        public MainForm(IVaultService vault)
+        private readonly GitHubAccount _account;
+        private readonly ToolTip _toolTip = new ToolTip();
+        private Button _accountButton;
+        private Button _repoButton;
+        private ContextMenuStrip _accountMenu;
+        private ContextMenuStrip _repoMenu;
+        private ToolStripMenuItem _accountHeaderItem;
+        private ToolStripMenuItem _identityItem;
+        private Panel _changesBanner;
+        private Label _changesText;
+        private FileSystemWatcher _watcher;
+        private Timer _watchDebounce;
+        private string _repoFullName;
+        private string _repoWebUrl;
+
+        public MainForm(IVaultService vault, GitHubAccount account = null)
         {
             if (vault == null)
             {
@@ -71,6 +86,7 @@ namespace PartLock.UI
             }
 
             _vault = vault;
+            _account = account;
             _repoName = GetRepoName(vault.RepoRoot);
 
             Text = "PartLock \u2013 " + _repoName;
@@ -103,7 +119,7 @@ namespace PartLock.UI
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 8,
+                RowCount = 9,
                 BackColor = Theme.Background,
                 Margin = new Padding(0),
                 Padding = new Padding(0)
@@ -113,6 +129,7 @@ namespace PartLock.UI
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // tip
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // actions
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // locking banner
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // changes banner
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // file list
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // activity toggle
             _activityRow = new RowStyle(SizeType.Absolute, 0f);
@@ -123,7 +140,8 @@ namespace PartLock.UI
 
             var tip = new Label
             {
-                Text = "Check Out before you edit \u00B7 Check In when you're done \u00B7 Get Latest often",
+                Text = "\u2460 Get Latest   \u2192   \u2461 Check Out the part   \u2192   \u2462 Edit & save in SolidWorks   \u2192   "
+                     + "\u2463 Check In to upload it to GitHub",
                 Font = Theme.Small,
                 ForeColor = Theme.Muted,
                 AutoSize = true,
@@ -133,10 +151,11 @@ namespace PartLock.UI
 
             root.Controls.Add(BuildActionBar(), 0, 2);
             root.Controls.Add(BuildLockingBanner(), 0, 3);
-            root.Controls.Add(BuildListArea(), 0, 4);
-            root.Controls.Add(BuildActivityToggle(), 0, 5);
-            root.Controls.Add(BuildActivityPanel(), 0, 6);
-            root.Controls.Add(BuildStatusStrip(), 0, 7);
+            root.Controls.Add(BuildChangesBanner(), 0, 4);
+            root.Controls.Add(BuildListArea(), 0, 5);
+            root.Controls.Add(BuildActivityToggle(), 0, 6);
+            root.Controls.Add(BuildActivityPanel(), 0, 7);
+            root.Controls.Add(BuildStatusStrip(), 0, 8);
 
             Controls.Add(root);
         }
@@ -211,35 +230,122 @@ namespace PartLock.UI
                 Margin = new Padding(0)
             };
 
-            _identityLabel = new Label
-            {
-                Text = "Loading\u2026",
-                Font = Theme.Small,
-                ForeColor = Theme.Muted,
-                AutoSize = true,
-                BackColor = Theme.Panel,
-                Margin = new Padding(0, 7, 16, 0)
-            };
-            right.Controls.Add(_identityLabel);
+            _repoButton = Theme.CreateButton("\U0001F4C1  " + _repoName + "  \u25BE", ButtonKind.Outline);
+            _repoButton.MinimumSize = new Size(0, 36);
+            _repoButton.Margin = new Padding(0, 0, 8, 0);
+            _repoButton.Click += delegate { _repoMenu.Show(_repoButton, new Point(0, _repoButton.Height)); };
+            right.Controls.Add(_repoButton);
 
-            var changeFolder = new LinkLabel
-            {
-                Text = "Change folder\u2026",
-                Font = Theme.Small,
-                LinkColor = Theme.Muted,
-                ActiveLinkColor = Theme.Accent,
-                VisitedLinkColor = Theme.Muted,
-                LinkBehavior = LinkBehavior.HoverUnderline,
-                AutoSize = true,
-                BackColor = Theme.Panel,
-                Margin = new Padding(0, 7, 0, 0)
-            };
-            changeFolder.LinkClicked += ChangeFolder_LinkClicked;
-            right.Controls.Add(changeFolder);
+            _accountButton = Theme.CreateButton(AccountButtonText(), ButtonKind.Outline);
+            _accountButton.MinimumSize = new Size(0, 36);
+            _accountButton.Margin = new Padding(0);
+            _accountButton.TextImageRelation = TextImageRelation.ImageBeforeText;
+            _accountButton.ImageAlign = ContentAlignment.MiddleLeft;
+            _accountButton.Click += delegate { _accountMenu.Show(_accountButton, new Point(0, _accountButton.Height)); };
+            right.Controls.Add(_accountButton);
+
+            // Kept for the commit-name text; shown inside the account menu.
+            _identityLabel = new Label { Visible = false };
+
+            BuildHeaderMenus();
 
             table.Controls.Add(right, 1, 0);
             header.Controls.Add(table);
             return header;
+        }
+
+        private string AccountButtonText()
+        {
+            if (_account == null || string.IsNullOrEmpty(_account.Login)) return "GitHub: not signed in  \u25BE";
+            return "@" + _account.Login + "  \u25BE";
+        }
+
+        private void BuildHeaderMenus()
+        {
+            _accountMenu = new ContextMenuStrip { Font = Theme.Base, ShowImageMargin = false };
+            _accountHeaderItem = new ToolStripMenuItem(_account == null || string.IsNullOrEmpty(_account.Login)
+                ? "Not signed in to GitHub"
+                : "Signed in to GitHub as " + _account.DisplayName + " (@" + _account.Login + ")") { Enabled = false };
+            _accountMenu.Items.Add(_accountHeaderItem);
+            _identityItem = new ToolStripMenuItem("Check-ins are signed as \u2026") { Enabled = false };
+            _accountMenu.Items.Add(_identityItem);
+            _accountMenu.Items.Add(new ToolStripSeparator());
+            var profile = new ToolStripMenuItem("Open my GitHub profile");
+            profile.Click += delegate
+            {
+                if (_account != null && !string.IsNullOrEmpty(_account.Login)) OpenUrl("https://github.com/" + _account.Login);
+            };
+            _accountMenu.Items.Add(profile);
+            var identity = new ToolStripMenuItem("Change name && email on check-ins\u2026");
+            identity.Click += ChangeIdentity_Click;
+            _accountMenu.Items.Add(identity);
+            var switchAccount = new ToolStripMenuItem("Sign out / switch GitHub account\u2026");
+            switchAccount.Click += SwitchAccount_Click;
+            _accountMenu.Items.Add(switchAccount);
+
+            _repoMenu = new ContextMenuStrip { Font = Theme.Base, ShowImageMargin = false };
+            var openWeb = new ToolStripMenuItem("Open this repository on GitHub");
+            openWeb.Click += delegate
+            {
+                if (!string.IsNullOrEmpty(_repoWebUrl)) OpenUrl(_repoWebUrl);
+                else MessageBox.Show(this, "This vault isn't on GitHub.", "PartLock", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+            _repoMenu.Items.Add(openWeb);
+            var openFolder = new ToolStripMenuItem("Show the folder in Explorer");
+            openFolder.Click += delegate { OpenUrl(_vault.RepoRoot); };
+            _repoMenu.Items.Add(openFolder);
+            _repoMenu.Items.Add(new ToolStripSeparator());
+            var switchRepo = new ToolStripMenuItem("Switch to another repository\u2026");
+            switchRepo.Click += ChangeFolder_LinkClicked;
+            _repoMenu.Items.Add(switchRepo);
+        }
+
+        private Control BuildChangesBanner()
+        {
+            _changesBanner = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Theme.FromHex("#DBEAFE"),
+                AutoSize = true,
+                Visible = false,
+                Padding = new Padding(20, 8, 20, 8),
+                Margin = new Padding(0)
+            };
+            var table = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                AutoSize = true,
+                BackColor = _changesBanner.BackColor,
+                Margin = new Padding(0)
+            };
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            _changesText = new Label
+            {
+                Font = Theme.Base,
+                ForeColor = Theme.FromHex("#1E3A8A"),
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                BackColor = _changesBanner.BackColor,
+                Margin = new Padding(0)
+            };
+            table.Controls.Add(_changesText, 0, 0);
+            var go = Theme.CreateButton("Check In now", ButtonKind.Primary);
+            go.MinimumSize = new Size(0, 30);
+            go.Margin = new Padding(8, 0, 0, 0);
+            go.Click += CheckIn_Click;
+            table.Controls.Add(go, 1, 0);
+            _changesBanner.Controls.Add(table);
+            return _changesBanner;
+        }
+
+        private static void OpenUrl(string target)
+        {
+            if (string.IsNullOrEmpty(target)) return;
+            try { Process.Start(target); }
+            catch (Exception) { }
         }
 
         private Control BuildActionBar()
@@ -608,8 +714,11 @@ namespace PartLock.UI
             }
 
             SetBusy(true, "Opening the vault\u2026");
+            StartWatcher();
+            LoadAvatarAsync();
             try
             {
+                await LoadRepoInfoAsync();
                 await LoadIdentityAsync();
                 _lockingConfigured = await _vault.IsLockingConfiguredAsync();
                 UpdateLockingBanner();
@@ -629,6 +738,101 @@ namespace PartLock.UI
                 _timer.Start();
                 SetBusy(false);
             }
+        }
+
+        private async Task LoadRepoInfoAsync()
+        {
+            string origin = await GitSetup.GetOriginUrlAsync(_vault.RepoRoot, System.Threading.CancellationToken.None);
+            _repoFullName = GitSetup.ParseGitHubRepo(origin);
+            _repoWebUrl = _repoFullName != null ? "https://github.com/" + _repoFullName : null;
+            string label = _repoFullName ?? _repoName;
+            _repoButton.Text = "\U0001F4C1  " + label + "  \u25BE";
+            Text = "PartLock \u2013 " + label;
+            _toolTip.SetToolTip(_repoButton, "Folder: " + _vault.RepoRoot + (origin != null ? "\nServer: " + origin : string.Empty));
+        }
+
+        private async void LoadAvatarAsync()
+        {
+            if (_account == null || string.IsNullOrEmpty(_account.AvatarUrl)) return;
+            byte[] data = await GitSetup.DownloadBytesAsync(_account.AvatarUrl + (_account.AvatarUrl.Contains("?") ? "&" : "?") + "s=64");
+            if (data == null || IsDisposed) return;
+            try
+            {
+                using (var stream = new MemoryStream(data))
+                using (var source = Image.FromStream(stream))
+                {
+                    int size = LogicalToDeviceUnits(22);
+                    var round = new Bitmap(size, size);
+                    using (Graphics g = Graphics.FromImage(round))
+                    using (var path = new System.Drawing.Drawing2D.GraphicsPath())
+                    {
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        path.AddEllipse(0, 0, size - 1, size - 1);
+                        g.SetClip(path);
+                        g.DrawImage(source, 0, 0, size, size);
+                    }
+                    _accountButton.Image = round;
+                    _accountButton.Text = " " + AccountButtonText();
+                }
+            }
+            catch (Exception) { }
+        }
+
+        private void StartWatcher()
+        {
+            if (!(_vault is VaultService) || string.IsNullOrEmpty(_vault.RepoRoot) || !Directory.Exists(_vault.RepoRoot)) return;
+            try
+            {
+                _watchDebounce = new Timer { Interval = 1500 };
+                _watchDebounce.Tick += async delegate
+                {
+                    if (_busy) return; // try again on the next tick
+                    _watchDebounce.Stop();
+                    try { await RefreshWithBusyAsync("Refreshing\u2026", false); }
+                    catch (Exception) { }
+                };
+
+                _watcher = new FileSystemWatcher(_vault.RepoRoot)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName |
+                                   NotifyFilters.LastWrite | NotifyFilters.Size
+                };
+                FileSystemEventHandler changed = delegate(object sender, FileSystemEventArgs e) { OnRepoFileChanged(e.FullPath); };
+                _watcher.Changed += changed;
+                _watcher.Created += changed;
+                _watcher.Deleted += changed;
+                _watcher.Renamed += delegate(object sender, RenamedEventArgs e) { OnRepoFileChanged(e.FullPath); };
+                _watcher.EnableRaisingEvents = true;
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.LogToFile("Couldn't watch the vault folder for changes.", ex.ToString());
+            }
+        }
+
+        private void OnRepoFileChanged(string fullPath)
+        {
+            string relative = fullPath ?? string.Empty;
+            string rootPath = (_vault.RepoRoot ?? string.Empty).TrimEnd('\\', '/');
+            if (relative.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase)) relative = relative.Substring(rootPath.Length);
+            relative = relative.TrimStart('\\', '/');
+            if (relative.StartsWith(".git", StringComparison.OrdinalIgnoreCase) &&
+                (relative.Length == 4 || relative[4] == '\\' || relative[4] == '/')) return;
+            string name = Path.GetFileName(relative);
+            if (name.StartsWith("~$", StringComparison.Ordinal)) return; // SolidWorks lock/temp files
+
+            try
+            {
+                BeginInvoke(new Action(delegate
+                {
+                    if (_watchDebounce == null || !_initialized) return;
+                    _watchDebounce.Stop();
+                    _watchDebounce.Start();
+                }));
+            }
+            catch (InvalidOperationException) { }
         }
 
         private async Task LoadIdentityAsync()
@@ -658,6 +862,13 @@ namespace PartLock.UI
             }
 
             _identityLabel.Text = string.IsNullOrWhiteSpace(_commitName) ? "No git name set" : _commitName;
+            if (_identityItem != null)
+            {
+                _identityItem.Text = string.IsNullOrWhiteSpace(_commitName)
+                    ? "Check-ins are signed as: (not set yet)"
+                    : "Check-ins are signed as " + _commitName +
+                      (string.IsNullOrWhiteSpace(_commitEmail) ? string.Empty : " <" + _commitEmail + ">");
+            }
         }
 
         private async Task ReloadAsync(bool fetchRemote)
@@ -895,8 +1106,20 @@ namespace PartLock.UI
                 return;
             }
 
+            // Files edited without pressing Check Out first: check them out now (if nobody else
+            // has them and the server has no newer version), so the check-in can go through.
+            var editedWithoutCheckOut = new HashSet<string>(
+                mine.Where(file => file.State == FileState.ModifiedNotCheckedOut).Select(file => file.Path),
+                StringComparer.OrdinalIgnoreCase);
+            List<string> needCheckOut = paths.Where(editedWithoutCheckOut.Contains).ToList();
+
             await RunBusyAsync("Checking in " + FileCountText(paths.Count) + "\u2026", async delegate
             {
+                if (needCheckOut.Count > 0)
+                {
+                    AppendLog("Checking out " + FileCountText(needCheckOut.Count) + " you edited without checking out first\u2026");
+                    await _vault.CheckOutAsync(needCheckOut);
+                }
                 await _vault.CheckInAsync(paths, message, keepCheckedOut);
                 await ReloadAsync(false);
             });
@@ -1057,8 +1280,35 @@ namespace PartLock.UI
             List<VaultFile> selected = SelectedFiles();
             _getLatestButton.Enabled = !_busy;
             _checkOutButton.Enabled = !_busy && selected.Any(CanCheckOut);
-            _checkInButton.Enabled = !_busy && _files.Any(IsMineToCheckIn);
+            int pending = _files.Count(IsMineToCheckIn);
+            int edited = _files.Count(file => IsMineToCheckIn(file) &&
+                (file.Modified || file.State == FileState.NewFile || file.State == FileState.Deleted));
+            _checkInButton.Enabled = !_busy && pending > 0;
+            _checkInButton.Text = pending > 0 ? "Check In (" + pending + ")\u2026" : "Check In\u2026";
+            StylePrimary(_checkInButton, edited > 0);
+            StylePrimary(_getLatestButton, edited == 0);
+            if (_changesBanner != null)
+            {
+                bool show = edited > 0;
+                if (show)
+                {
+                    _changesText.Text = "You have " + FileCountText(edited) + " with changes that aren't on GitHub yet. "
+                                      + "Check In to upload them so the team gets them.";
+                }
+                if (_changesBanner.Visible != show) _changesBanner.Visible = show;
+            }
             _undoButton.Enabled = !_busy && selected.Any(CanUndo);
+        }
+
+        private static void StylePrimary(Button button, bool primary)
+        {
+            Color back = primary ? Theme.AccentColor : Theme.White;
+            if (button.BackColor == back) return;
+            button.BackColor = back;
+            button.ForeColor = primary ? Theme.White : Theme.TextColor;
+            button.FlatAppearance.BorderSize = primary ? 0 : 1;
+            button.FlatAppearance.MouseOverBackColor = primary ? Theme.AccentHover : Theme.HoverColor;
+            button.FlatAppearance.MouseDownBackColor = primary ? Theme.AccentPressed : Theme.PressedColor;
         }
 
         private static bool CanCheckOut(VaultFile file)
@@ -1082,6 +1332,7 @@ namespace PartLock.UI
         {
             return file != null &&
                    (file.State == FileState.CheckedOutByMe ||
+                    (file.State == FileState.ModifiedNotCheckedOut && (file.Lock == null || file.Lock.IsMine)) ||
                     file.State == FileState.NewFile ||
                     file.State == FileState.Changed ||
                     file.State == FileState.Deleted);
@@ -1861,7 +2112,7 @@ namespace PartLock.UI
             }
         }
 
-        private void ChangeFolder_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+        private void ChangeFolder_LinkClicked(object sender, EventArgs e)
         {
             if (_busy)
             {
@@ -1870,30 +2121,64 @@ namespace PartLock.UI
 
             try
             {
-                string newRoot = null;
-                using (var setup = new SetupForm())
+                using (var picker = new RepoPickerDialog(_account, _vault.RepoRoot))
                 {
-                    if (setup.ShowDialog(this) != DialogResult.OK ||
-                        string.IsNullOrWhiteSpace(setup.RepoRoot))
+                    if (picker.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(picker.RepoRoot))
                     {
                         return;
                     }
 
-                    newRoot = setup.RepoRoot;
+                    if (string.Equals(picker.RepoRoot, _vault.RepoRoot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+
                     AppSettings settings = AppSettings.Load();
-                    settings.RepoPath = newRoot;
+                    settings.UseRepo(picker.RepoRoot);
                     settings.Save();
                 }
 
-                if (!string.IsNullOrEmpty(newRoot))
-                {
-                    Application.Restart();
-                }
+                Application.Restart();
             }
             catch (Exception ex)
             {
                 ErrorDialog.ShowException(this, ex);
             }
+        }
+
+        private async void ChangeIdentity_Click(object sender, EventArgs e)
+        {
+            if (_busy) return;
+            using (var dialog = new IdentityDialog(_commitName, _commitEmail))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                await RunBusyAsync("Saving your name\u2026", async delegate
+                {
+                    await _vault.SetCommitIdentityAsync(dialog.PersonName, dialog.PersonEmail);
+                    _commitName = dialog.PersonName;
+                    _commitEmail = dialog.PersonEmail;
+                    _identityConfirmed = true;
+                    UpdateIdentityLabel();
+                });
+            }
+        }
+
+        private async void SwitchAccount_Click(object sender, EventArgs e)
+        {
+            if (_busy) return;
+            DialogResult answer = MessageBox.Show(this,
+                "Sign out of GitHub on this computer? PartLock will restart and ask you to sign in again "
+                + "(you can use a different account).",
+                "PartLock", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+            if (answer != DialogResult.OK) return;
+
+            bool done = false;
+            await RunBusyAsync("Signing out\u2026", async delegate
+            {
+                await GitSetup.SignOutAsync(System.Threading.CancellationToken.None);
+                done = true;
+            });
+            if (done) Application.Restart();
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -1907,6 +2192,8 @@ namespace PartLock.UI
             }
 
             _timer.Stop();
+            if (_watcher != null) { _watcher.EnableRaisingEvents = false; _watcher.Dispose(); _watcher = null; }
+            if (_watchDebounce != null) _watchDebounce.Stop();
 
             int mine = _files.Count(file => file.State == FileState.CheckedOutByMe);
             if (mine > 0 && e.CloseReason == CloseReason.UserClosing)

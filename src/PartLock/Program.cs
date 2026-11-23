@@ -46,7 +46,7 @@ namespace PartLock
             string shot = ArgValue(args, "--screenshot");
             string dialog = ArgValue(args, "--dialog");
             var demo = new DemoVaultService();
-            var main = new MainForm(demo);
+            var main = new MainForm(demo, new GitHubAccount { Login = "sam-demo", Name = "Sam Demo", Id = 1 });
             if (shot != null)
             {
                 var timer = new Timer { Interval = 3500 };
@@ -143,22 +143,18 @@ namespace PartLock
             AppSettings settings = AppSettings.Load();
             string root = NormalizeRepo(settings.RepoPath);
 
-            if (!EnsureGitHubSignIn(root)) return;
+            GitHubAccount account;
+            if (!EnsureGitHubSignIn(root, out account)) return;
 
             if (root == null)
             {
-                root = AskForRepo(null);
+                root = AskForRepo(account);
                 if (root == null) return;
-                settings.RepoPath = root;
-                settings.Save();
             }
-            else if (!string.Equals(root, settings.RepoPath, StringComparison.OrdinalIgnoreCase))
-            {
-                settings.RepoPath = root;
-                settings.Save();
-            }
+            settings.UseRepo(root);
+            settings.Save();
 
-            Application.Run(new MainForm(new VaultService(root, null)));
+            Application.Run(new MainForm(new VaultService(root, null), account));
         }
 
         /// <summary>Installs Git for Windows (with Git LFS) for the user. False = quit.</summary>
@@ -200,8 +196,9 @@ namespace PartLock
         /// anything talks to the server. Skipped for vaults hosted somewhere other than GitHub.
         /// False = the user quit.
         /// </summary>
-        private static bool EnsureGitHubSignIn(string repoRoot)
+        private static bool EnsureGitHubSignIn(string repoRoot, out GitHubAccount signedIn)
         {
+            signedIn = null;
             var none = System.Threading.CancellationToken.None;
             GitHubAccount account = null;
             try
@@ -243,17 +240,16 @@ namespace PartLock
             {
                 ErrorDialog.LogToFile("Setting name/email from GitHub failed.", ex.ToString());
             }
+            signedIn = account;
             return true;
         }
 
-        private static string AskForRepo(IWin32Window owner)
+        private static string AskForRepo(GitHubAccount account)
         {
-            using (var setup = new SetupForm())
+            using (var picker = new RepoPickerDialog(account, null))
             {
-                DialogResult result = owner == null ? setup.ShowDialog() : setup.ShowDialog(owner);
-                if (result != DialogResult.OK) return null;
-                if (string.IsNullOrEmpty(setup.RepoRoot)) return null;
-                return setup.RepoRoot;
+                if (picker.ShowDialog() != DialogResult.OK) return null;
+                return string.IsNullOrEmpty(picker.RepoRoot) ? null : picker.RepoRoot;
             }
         }
 

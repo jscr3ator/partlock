@@ -31,6 +31,7 @@ namespace PartLock.Core
         public string Name { get; set; }
         public long Id { get; set; }
         public string Email { get; set; }
+        public string AvatarUrl { get; set; }
 
         /// <summary>Real email when public, otherwise GitHub's private no-reply address.</summary>
         public string CommitEmail
@@ -55,6 +56,38 @@ namespace PartLock.Core
         [DataMember(Name = "name")] public string Name { get; set; }
         [DataMember(Name = "id")] public long Id { get; set; }
         [DataMember(Name = "email")] public string Email { get; set; }
+        [DataMember(Name = "avatar_url")] public string AvatarUrl { get; set; }
+    }
+
+    [DataContract]
+    internal class GitHubOwnerDto
+    {
+        [DataMember(Name = "login")] public string Login { get; set; }
+    }
+
+    [DataContract]
+    internal class GitHubRepoDto
+    {
+        [DataMember(Name = "full_name")] public string FullName { get; set; }
+        [DataMember(Name = "name")] public string Name { get; set; }
+        [DataMember(Name = "clone_url")] public string CloneUrl { get; set; }
+        [DataMember(Name = "html_url")] public string HtmlUrl { get; set; }
+        [DataMember(Name = "description")] public string Description { get; set; }
+        [DataMember(Name = "private")] public bool Private { get; set; }
+        [DataMember(Name = "pushed_at")] public string PushedAt { get; set; }
+        [DataMember(Name = "owner")] public GitHubOwnerDto Owner { get; set; }
+    }
+
+    /// <summary>A GitHub repository the signed-in user can open.</summary>
+    public class GitHubRepo
+    {
+        public string FullName { get; set; }
+        public string Name { get; set; }
+        public string CloneUrl { get; set; }
+        public string HtmlUrl { get; set; }
+        public string Description { get; set; }
+        public bool Private { get; set; }
+        public DateTime PushedAtUtc { get; set; }
     }
 
     [DataContract]
@@ -318,6 +351,97 @@ namespace PartLock.Core
             }
         }
 
+        /// <summary>Every repository the signed-in user can push to or read, most recently changed first.</summary>
+        public static async Task<List<GitHubRepo>> ListRepositoriesAsync(CancellationToken ct)
+        {
+            var runner = new GitRunner(null);
+            Credential cred = await FillAsync(runner, false, ct).ConfigureAwait(false);
+            if (cred == null)
+                throw new VaultException("You're not signed in to GitHub. Restart PartLock to sign in.");
+
+            var repos = new List<GitHubRepo>();
+            for (int page = 1; page <= 5; page++)
+            {
+                string json = await GetStringAsync(
+                    "https://api.github.com/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member&page=" + page,
+                    cred.Password, ct).ConfigureAwait(false);
+                List<GitHubRepoDto> batch = Deserialize<List<GitHubRepoDto>>(json);
+                if (batch == null || batch.Count == 0) break;
+                foreach (GitHubRepoDto dto in batch)
+                {
+                    if (dto == null || string.IsNullOrEmpty(dto.CloneUrl)) continue;
+                    DateTime pushed;
+                    DateTime.TryParse(dto.PushedAt, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                        out pushed);
+                    repos.Add(new GitHubRepo
+                    {
+                        FullName = dto.FullName,
+                        Name = dto.Name,
+                        CloneUrl = dto.CloneUrl,
+                        HtmlUrl = dto.HtmlUrl,
+                        Description = dto.Description,
+                        Private = dto.Private,
+                        PushedAtUtc = pushed
+                    });
+                }
+                if (batch.Count < 100) break;
+            }
+            return repos;
+        }
+
+        /// <summary>Forgets the saved GitHub sign-in on this computer (the next start asks again).</summary>
+        public static async Task SignOutAsync(CancellationToken ct)
+        {
+            var runner = new GitRunner(null);
+            Credential cred = await FillAsync(runner, false, ct).ConfigureAwait(false);
+            if (cred == null) cred = new Credential();
+            await RejectAsync(runner, cred, ct).ConfigureAwait(false);
+        }
+
+        /// <summary>The URL of the repo's "origin" remote, or null.</summary>
+        public static async Task<string> GetOriginUrlAsync(string repoRoot, CancellationToken ct)
+        {
+            if (string.IsNullOrEmpty(repoRoot)) return null;
+            try
+            {
+                GitResult url = await new GitRunner(null).RunAsync(
+                    repoRoot, new[] { "remote", "get-url", "origin" }, ct, null, false, 30000).ConfigureAwait(false);
+                string text = (url.StdOut ?? string.Empty).Trim();
+                return url.Success && text.Length > 0 ? GitRunner.Redact(text) : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>"owner/name" for a github.com remote URL (https or ssh), otherwise null.</summary>
+        public static string ParseGitHubRepo(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+            Match m = Regex.Match(url.Trim(), @"github\.com[:/]+([^/\s]+)/([^/\s]+?)(\.git)?/?$", RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value + "/" + m.Groups[2].Value : null;
+        }
+
+        /// <summary>Downloads a small image (e.g. an avatar). Null on any failure.</summary>
+        public static async Task<byte[]> DownloadBytesAsync(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return null;
+            try
+            {
+                using (var client = new WebClient())
+                {
+                    client.Headers[HttpRequestHeader.UserAgent] = UserAgent;
+                    return await client.DownloadDataTaskAsync(new Uri(url)).ConfigureAwait(false);
+                }
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         private static async Task EnsureCredentialHelperAsync(GitRunner runner, IProgress<string> log, CancellationToken ct)
         {
             GitResult helper = await runner.RunAsync(
@@ -412,7 +536,10 @@ namespace PartLock.Core
 
             GitHubUserDto dto = Deserialize<GitHubUserDto>(json);
             if (dto == null || string.IsNullOrEmpty(dto.Login)) return null;
-            return new GitHubAccount { Login = dto.Login, Name = dto.Name, Id = dto.Id, Email = dto.Email };
+            return new GitHubAccount
+            {
+                Login = dto.Login, Name = dto.Name, Id = dto.Id, Email = dto.Email, AvatarUrl = dto.AvatarUrl
+            };
         }
 
         // ------------------------------------------------------------------

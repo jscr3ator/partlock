@@ -12,6 +12,19 @@ namespace PartLock
     {
         public string RepoPath { get; set; }
 
+        /// <summary>Every vault folder PartLock has opened on this computer (for the repo switcher).</summary>
+        public System.Collections.Generic.List<string> KnownRepos { get; } =
+            new System.Collections.Generic.List<string>();
+
+        /// <summary>Makes <paramref name="path"/> the current vault and remembers it.</summary>
+        public void UseRepo(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            RepoPath = path;
+            KnownRepos.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+            KnownRepos.Insert(0, path);
+        }
+
         private static string SettingsFile
         {
             get
@@ -43,6 +56,11 @@ namespace PartLock
                     {
                         settings.RepoPath = value;
                     }
+                    else if (string.Equals(key, "knownRepo", StringComparison.OrdinalIgnoreCase) && value.Length > 0 &&
+                             !settings.KnownRepos.Exists(p => string.Equals(p, value, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        settings.KnownRepos.Add(value);
+                    }
                 }
             }
             catch
@@ -65,6 +83,10 @@ namespace PartLock
                 if (!string.IsNullOrEmpty(RepoPath))
                 {
                     text.AppendLine("repoPath=" + RepoPath);
+                }
+                foreach (string known in KnownRepos)
+                {
+                    if (!string.IsNullOrEmpty(known)) text.AppendLine("knownRepo=" + known);
                 }
                 File.WriteAllText(file, text.ToString(), Encoding.UTF8);
             }
