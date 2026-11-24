@@ -1,4 +1,7 @@
-## What's new in v0.7.0
+## What's new in v0.7.1
+- **Team notifications post as the person.** In Discord, each message now shows the person's **GitHub profile picture and GitHub name** (synced from the account they're signed in with), and just says what happened, e.g. "🔒 Just checked out `Wing_Assembly.SLDASM`, `WING_SKIN.SLDPRT` in **DBF-Plane-V1**". Check-ins include their message underneath. Slack and Teams don't allow changing the sender, so there the GitHub name is in the text instead.
+
+## v0.7.0
 - **Team chat notifications.** PartLock can post to a Discord, Slack or Microsoft Teams channel whenever someone checks out, checks in (with their message), undoes a check-out, or a lead force-unlocks a file. For example: "✅ **Samuel Joseph (@sjcreator06)** checked in `Wing_Assembly.SLDASM` and 3 more: *thicker spar caps*".
   - **Set up once (team lead):** create a webhook in your chat app (Discord: Edit Channel → Integrations → Webhooks → Copy Webhook URL), then in PartLock click 📁 → **Team notifications…**, paste it, **Send test message**, **Save for the team**.
   - It's saved in the vault (`.partlock/config`), so everyone's PartLock posts to it after their next Get Latest. Pick which events post with the checkboxes; clear the link to turn it off.
@@ -28,7 +31,7 @@
 - v0.2.0: installs Git for you, requires GitHub sign-in.
 
 ## Download
-- **PartLock-v0.7.0.zip**: unzip anywhere and run `PartLock.exe`, or
+- **PartLock-v0.7.1.zip**: unzip anywhere and run `PartLock.exe`, or
 - **PartLock.exe**: the app on its own.
 
 ## Requirements

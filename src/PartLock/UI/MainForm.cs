@@ -1214,15 +1214,10 @@ namespace PartLock.UI
             }
         }
 
-        /// <summary>"Samuel Joseph (@sjcreator06)" for team notifications.</summary>
-        private string WhoAmI()
+        /// <summary>The signed-in person (GitHub name, username and picture) for team notifications.</summary>
+        private PartLock.Platform.TeamSender WhoAmI()
         {
-            string name = !string.IsNullOrWhiteSpace(_commitName) ? _commitName
-                : _account != null && !string.IsNullOrEmpty(_account.Login) ? _account.DisplayName
-                : _vault.ServerUserName ?? "Someone";
-            string login = _account != null ? _account.Login : _vault.ServerUserName;
-            return !string.IsNullOrEmpty(login) && !string.Equals(login, name, StringComparison.OrdinalIgnoreCase)
-                ? name + " (@" + login + ")" : name;
+            return PartLock.Platform.TeamSender.From(_account, _commitName, _vault.ServerUserName);
         }
 
         /// <summary>

@@ -9,7 +9,7 @@ namespace PartLock.UI
     public class TeamNotifyDialog : Form
     {
         private readonly string _repoRoot;
-        private readonly string _who;
+        private readonly TeamSender _who;
         private readonly TextBox _url;
         private readonly CheckBox _checkOut;
         private readonly CheckBox _checkIn;
@@ -18,7 +18,7 @@ namespace PartLock.UI
         private readonly Label _status;
         private readonly Button _test;
 
-        public TeamNotifyDialog(string repoRoot, string who)
+        public TeamNotifyDialog(string repoRoot, TeamSender who)
         {
             _repoRoot = repoRoot;
             _who = who;

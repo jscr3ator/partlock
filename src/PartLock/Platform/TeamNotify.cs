@@ -21,6 +21,50 @@ namespace PartLock.Platform
 {
     public enum TeamEvent { CheckOut, CheckIn, Undo, ForceUnlock, Test }
 
+    /// <summary>Who did it: shown as the message's name and picture (Discord) or in the text (others).</summary>
+    public sealed class TeamSender
+    {
+        public string Name { get; set; }
+        public string Login { get; set; }
+        public string AvatarUrl { get; set; }
+
+        /// <summary>GitHub name (or username), never empty.</summary>
+        public string DisplayName
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(Name)) return Name.Trim();
+                if (!string.IsNullOrWhiteSpace(Login)) return Login.Trim();
+                return "Someone";
+            }
+        }
+
+        /// <summary>The GitHub profile picture; falls back to github.com/&lt;login&gt;.png.</summary>
+        public string Avatar
+        {
+            get
+            {
+                if (!string.IsNullOrEmpty(AvatarUrl)) return AvatarUrl;
+                return string.IsNullOrEmpty(Login) ? null : "https://github.com/" + Uri.EscapeDataString(Login) + ".png";
+            }
+        }
+
+        /// <summary>From the signed-in GitHub account, with the git commit name / lock username as fallbacks.</summary>
+        public static TeamSender From(PartLock.Core.GitHubAccount account, string fallbackName, string fallbackLogin)
+        {
+            var sender = new TeamSender();
+            if (account != null)
+            {
+                sender.Name = account.Name;
+                sender.Login = account.Login;
+                sender.AvatarUrl = account.AvatarUrl;
+            }
+            if (string.IsNullOrWhiteSpace(sender.Login)) sender.Login = fallbackLogin;
+            if (string.IsNullOrWhiteSpace(sender.Name)) sender.Name = string.IsNullOrWhiteSpace(fallbackName) ? null : fallbackName;
+            return sender;
+        }
+    }
+
     public sealed class TeamNotifyConfig
     {
         public string Webhook { get; set; }
@@ -118,45 +162,54 @@ namespace PartLock.Platform
         }
 
         /// <summary>Fire-and-forget: posts the event if the vault has a webhook for it.</summary>
-        public static void Send(string repoRoot, TeamEvent kind, string who, IEnumerable<string> paths, string message = null)
+        public static void Send(string repoRoot, TeamEvent kind, TeamSender who, IEnumerable<string> paths, string message = null)
         {
             TeamNotifyConfig config = Load(repoRoot);
             if (!config.Enabled || !config.Events.Contains(kind)) return;
-            string text = Describe(repoRoot, kind, who, paths, message);
+            List<string> list = (paths ?? new string[0]).ToList();
             Task.Run(async () =>
             {
-                try { await PostAsync(config.Webhook, text, kind, who, paths, repoRoot).ConfigureAwait(false); }
+                try { await PostAsync(config.Webhook, kind, who, list, message, repoRoot).ConfigureAwait(false); }
                 catch (Exception ex) { PartLock.UI.ErrorDialog.LogToFile("Team notification failed.", ex.Message); }
             });
         }
 
         /// <summary>Sends a test message; throws with a readable message on failure.</summary>
-        public static Task SendTestAsync(string webhook, string repoRoot, string who)
+        public static Task SendTestAsync(string webhook, string repoRoot, TeamSender who)
         {
-            string text = "✅ PartLock is connected. Check-outs and check-ins in **" + RepoName(repoRoot) +
-                          "** will show up here. (test sent by " + who + ")";
-            return PostAsync(webhook, text, TeamEvent.Test, who, new string[0], repoRoot);
+            return PostAsync(webhook, TeamEvent.Test, who, new List<string>(), null, repoRoot);
         }
 
-        public static string Describe(string repoRoot, TeamEvent kind, string who, IEnumerable<string> paths, string message)
+        /// <summary>
+        /// The message text. With <paramref name="includeName"/> false (Discord, where the message
+        /// already shows the person's GitHub name and picture) it reads "Just checked out `a`, `b`".
+        /// </summary>
+        public static string Describe(string repoRoot, TeamEvent kind, TeamSender who, IEnumerable<string> paths,
+            string message, bool includeName)
         {
             List<string> list = (paths ?? new string[0]).Where(p => !string.IsNullOrEmpty(p) &&
                 !p.StartsWith(".partlock/", StringComparison.OrdinalIgnoreCase)).ToList();
             string files = FileList(list);
             string repo = RepoName(repoRoot);
+            string subject = includeName
+                ? "**" + who.DisplayName + "**" +
+                  (string.IsNullOrEmpty(who.Login) || string.Equals(who.Login, who.DisplayName, StringComparison.OrdinalIgnoreCase)
+                      ? string.Empty : " (@" + who.Login + ")") + " just"
+                : "Just";
             switch (kind)
             {
                 case TeamEvent.CheckOut:
-                    return "\U0001F512 **" + who + "** checked out " + files + " in " + repo;
+                    return "\U0001F512 " + subject + " checked out " + files + " in **" + repo + "**";
                 case TeamEvent.CheckIn:
-                    return "✅ **" + who + "** checked in " + files + " in " + repo +
+                    return "✅ " + subject + " checked in " + files + " in **" + repo + "**" +
                            (string.IsNullOrWhiteSpace(message) ? string.Empty : "\n> " + message.Trim().Replace("\n", "\n> "));
                 case TeamEvent.Undo:
-                    return "↩️ **" + who + "** undid their check-out of " + files + " in " + repo + " (changes thrown away)";
+                    return "↩️ " + subject + " undid their check-out of " + files + " in **" + repo + "** (changes thrown away)";
                 case TeamEvent.ForceUnlock:
-                    return "⚠️ **" + who + "** force-unlocked " + files + " in " + repo;
+                    return "⚠️ " + subject + " force-unlocked " + files + " in **" + repo + "**";
                 default:
-                    return who + ": " + files;
+                    return "\U0001F44B " + subject + " connected PartLock to this channel. Check-outs and check-ins in **" +
+                           repo + "** will show up here.";
             }
         }
 
@@ -174,35 +227,53 @@ namespace PartLock.Platform
             catch (Exception) { return "the vault"; }
         }
 
-        private static async Task PostAsync(string webhook, string text, TeamEvent kind, string who,
-            IEnumerable<string> paths, string repoRoot)
+        private static async Task PostAsync(string webhook, TeamEvent kind, TeamSender who,
+            List<string> paths, string message, string repoRoot)
         {
+            if (who == null) who = new TeamSender();
             Uri uri;
             if (!Uri.TryCreate((webhook ?? string.Empty).Trim(), UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps)
                 throw new ArgumentException("The webhook address must start with https://");
 
             string host = uri.Host.ToLowerInvariant();
             string body;
+            string text;
             if (host.EndsWith("discord.com") || host.EndsWith("discordapp.com"))
             {
+                // Posts as the person: their GitHub name and profile picture.
+                text = Describe(repoRoot, kind, who, paths, message, false);
                 if (text.Length > 1900) text = text.Substring(0, 1900) + "…";
-                body = "{\"username\":\"PartLock\",\"content\":" + Json(text) + "}";
+                string name = who.DisplayName;
+                if (name.Length > 80) name = name.Substring(0, 80);
+                if (name.IndexOf("discord", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    name.IndexOf("clyde", StringComparison.OrdinalIgnoreCase) >= 0) name = "PartLock"; // names Discord rejects
+                body = "{\"username\":" + Json(name) +
+                       (who.Avatar != null ? ",\"avatar_url\":" + Json(who.Avatar) : string.Empty) +
+                       ",\"content\":" + Json(text) + ",\"allowed_mentions\":{\"parse\":[]}}";
             }
             else if (host.EndsWith("slack.com"))
             {
-                // Slack uses *bold*, not **bold**.
-                body = "{\"text\":" + Json(text.Replace("**", "*")) + "}";
+                // Slack uses *bold*, not **bold**. Newer Slack apps ignore username/icon_url, so the name stays in the text.
+                text = Describe(repoRoot, kind, who, paths, message, true);
+                body = "{\"text\":" + Json(text.Replace("**", "*")) + ",\"username\":" + Json(who.DisplayName) +
+                       (who.Avatar != null ? ",\"icon_url\":" + Json(who.Avatar) : string.Empty) + "}";
             }
             else if (host.Contains("office.com") || host.Contains("office365.com") || host.Contains("logic.azure.com"))
             {
+                text = Describe(repoRoot, kind, who, paths, message, true);
                 body = "{\"text\":" + Json(text) + "}";
             }
             else
             {
-                var fileJson = (paths ?? new string[0]).Select(Json).ToArray();
+                text = Describe(repoRoot, kind, who, paths, message, true);
+                var fileJson = paths.Select(Json).ToArray();
                 body = "{\"text\":" + Json(text) + ",\"content\":" + Json(text) +
+                       ",\"username\":" + Json(who.DisplayName) +
+                       (who.Avatar != null ? ",\"avatar_url\":" + Json(who.Avatar) : string.Empty) +
                        ",\"event\":" + Json(kind.ToString().ToLowerInvariant()) +
-                       ",\"user\":" + Json(who) + ",\"repository\":" + Json(RepoName(repoRoot)) +
+                       ",\"user\":{\"name\":" + Json(who.DisplayName) + ",\"login\":" + Json(who.Login) + "}" +
+                       ",\"repository\":" + Json(RepoName(repoRoot)) +
+                       ",\"message\":" + Json(message) +
                        ",\"files\":[" + string.Join(",", fileJson) + "]}";
             }
 

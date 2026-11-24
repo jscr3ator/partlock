@@ -211,19 +211,24 @@ namespace PartLock.UI
             return "Done. " + file.FileName + " is back to the latest checked-in version.";
         }
 
-        private async Task<string> WhoAsync()
+        private PartLock.Platform.TeamSender _sender;
+
+        /// <summary>The signed-in GitHub person (name, username, picture) for team notifications.</summary>
+        private async Task<PartLock.Platform.TeamSender> WhoAsync()
         {
+            if (_sender != null) return _sender;
+            GitHubAccount account = null;
             string name = null;
+            try { account = await GitSetup.GetSignedInAccountAsync(System.Threading.CancellationToken.None); }
+            catch (Exception) { }
             try
             {
                 Tuple<string, string> identity = await _vault.GetCommitIdentityAsync();
                 if (identity != null) name = identity.Item1;
             }
             catch (Exception) { }
-            string login = _vault.ServerUserName;
-            if (string.IsNullOrWhiteSpace(name)) name = login ?? "Someone";
-            return !string.IsNullOrEmpty(login) && !string.Equals(login, name, StringComparison.OrdinalIgnoreCase)
-                ? name + " (@" + login + ")" : name;
+            _sender = PartLock.Platform.TeamSender.From(account, name, _vault.ServerUserName);
+            return _sender;
         }
 
         private void Log(string line)
