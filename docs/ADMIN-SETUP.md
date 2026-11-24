@@ -100,6 +100,10 @@ Run the end-to-end tests (spins up a throwaway Gitea server with LFS + locks, wh
 ./tests/run-e2e.sh
 ```
 
+## Team chat notifications (optional)
+
+Create a webhook in your team chat (Discord: Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL; Slack: Incoming Webhooks; Teams: Workflows/Incoming Webhook). In PartLock click **📁 → Team notifications…**, paste the link, **Send test message**, then **Save for the team**. The setting is checked in to `.partlock/config`, so every teammate's PartLock posts check-outs and check-ins after their next Get Latest. Anyone who can open the vault can read the link, so use a channel just for CAD updates.
+
 ## 9. First-day checklist
 
 - [ ] Repo created, all members added with Write access.

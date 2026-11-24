@@ -329,6 +329,9 @@ namespace PartLock.UI
             switchRepo.Click += ChangeFolder_LinkClicked;
             _repoMenu.Items.Add(switchRepo);
             _repoMenu.Items.Add(new ToolStripSeparator());
+            var notify = new ToolStripMenuItem("Team notifications (Discord / Slack / Teams)\u2026");
+            notify.Click += TeamNotify_Click;
+            _repoMenu.Items.Add(notify);
             var explorerMenu = new ToolStripMenuItem("Right-click menu in File Explorer") { CheckOnClick = true };
             explorerMenu.Checked = AppSettings.Load().ExplorerMenu;
             explorerMenu.ToolTipText = "Check Out / Check In from File Explorer: right-click a CAD file \u2192 PartLock "
@@ -1204,7 +1207,22 @@ namespace PartLock.UI
                 await ReloadAsync(false);
                 done = true;
             });
-            if (done) WarnIfOpenReadOnly(paths);
+            if (done)
+            {
+                PartLock.Platform.TeamNotify.Send(_vault.RepoRoot, PartLock.Platform.TeamEvent.CheckOut, WhoAmI(), paths);
+                WarnIfOpenReadOnly(paths);
+            }
+        }
+
+        /// <summary>"Samuel Joseph (@sjcreator06)" for team notifications.</summary>
+        private string WhoAmI()
+        {
+            string name = !string.IsNullOrWhiteSpace(_commitName) ? _commitName
+                : _account != null && !string.IsNullOrEmpty(_account.Login) ? _account.DisplayName
+                : _vault.ServerUserName ?? "Someone";
+            string login = _account != null ? _account.Login : _vault.ServerUserName;
+            return !string.IsNullOrEmpty(login) && !string.Equals(login, name, StringComparison.OrdinalIgnoreCase)
+                ? name + " (@" + login + ")" : name;
         }
 
         /// <summary>
@@ -1312,6 +1330,7 @@ namespace PartLock.UI
                 }
                 List<string> toCommit = await SubAssemblyPrompt.AddSavedListsAsync(_vault, paths);
                 await _vault.CheckInAsync(toCommit, message, keepCheckedOut);
+                PartLock.Platform.TeamNotify.Send(_vault.RepoRoot, PartLock.Platform.TeamEvent.CheckIn, WhoAmI(), paths, message);
                 await ReloadAsync(false);
             });
         }
@@ -1395,6 +1414,7 @@ namespace PartLock.UI
             await RunBusyAsync("Undoing check-out\u2026", async delegate
             {
                 await _vault.UndoCheckOutAsync(paths);
+                PartLock.Platform.TeamNotify.Send(_vault.RepoRoot, PartLock.Platform.TeamEvent.Undo, WhoAmI(), paths);
                 await ReloadAsync(false);
             });
         }
@@ -2222,6 +2242,8 @@ namespace PartLock.UI
                 {
                     await _vault.ForceUnlockAsync(lockInfo);
                 }
+                PartLock.Platform.TeamNotify.Send(_vault.RepoRoot, PartLock.Platform.TeamEvent.ForceUnlock, WhoAmI(),
+                    locks.Select(l => l.Path + (string.IsNullOrEmpty(l.Owner) ? string.Empty : " (was " + l.Owner + "'s)")).ToList());
 
                 await ReloadAsync(false);
             });
@@ -2364,6 +2386,40 @@ namespace PartLock.UI
             {
                 ErrorDialog.ShowException(this, ex);
             }
+        }
+
+        private async void TeamNotify_Click(object sender, EventArgs e)
+        {
+            if (_busy || !(_vault is VaultService)) return;
+            PartLock.Platform.TeamNotifyConfig config;
+            using (var dialog = new TeamNotifyDialog(_vault.RepoRoot, WhoAmI()))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Result == null) return;
+                config = dialog.Result;
+            }
+
+            bool identityOk = false;
+            await RunBusyAsync("Preparing\u2026", async delegate { identityOk = await EnsureIdentityAsync(); });
+            if (!identityOk) return;
+
+            await RunBusyAsync("Sharing team notification settings\u2026", async delegate
+            {
+                string rel = PartLock.Platform.TeamNotify.Save(_vault.RepoRoot, config);
+                IReadOnlyList<VaultFile> files = await _vault.GetFilesAsync(true);
+                VaultFile file = files.FirstOrDefault(f => string.Equals(f.Path, rel, StringComparison.OrdinalIgnoreCase));
+                if (file != null && file.Lock != null && !file.Lock.IsMine)
+                    throw new VaultException("Someone has the team settings file checked out. Try again later.");
+                if (file != null && file.IsTracked && file.IsLockable && (file.Lock == null))
+                    await _vault.CheckOutAsync(new[] { rel }); // only if the repo marks it lockable
+                if (file == null || file.Modified || file.State == FileState.NewFile || file.State == FileState.Changed ||
+                    file.State == FileState.ModifiedNotCheckedOut)
+                {
+                    await _vault.CheckInAsync(new[] { rel },
+                        config.Enabled ? "Set up PartLock team notifications" : "Turn off PartLock team notifications", false);
+                }
+                await ReloadAsync(false);
+            });
+            AppendLog(config.Enabled ? "Team notifications are on for everyone." : "Team notifications are off.");
         }
 
         private async void ChangeIdentity_Click(object sender, EventArgs e)

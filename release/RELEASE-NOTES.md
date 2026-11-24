@@ -1,4 +1,10 @@
-## What's new in v0.6.0
+## What's new in v0.7.0
+- **Team chat notifications.** PartLock can post to a Discord, Slack or Microsoft Teams channel whenever someone checks out, checks in (with their message), undoes a check-out, or a lead force-unlocks a file. For example: "✅ **Samuel Joseph (@sjcreator06)** checked in `Wing_Assembly.SLDASM` and 3 more: *thicker spar caps*".
+  - **Set up once (team lead):** create a webhook in your chat app (Discord: Edit Channel → Integrations → Webhooks → Copy Webhook URL), then in PartLock click 📁 → **Team notifications…**, paste it, **Send test message**, **Save for the team**.
+  - It's saved in the vault (`.partlock/config`), so everyone's PartLock posts to it after their next Get Latest. Pick which events post with the checkboxes; clear the link to turn it off.
+  - Posting never blocks or slows a check-in; if the chat service is down the message is just skipped.
+
+## v0.6.0
 - **Checking out an assembly now includes its parts too, not just sub-assemblies.** PartLock lists every sub-assembly and part the assembly uses (all levels), all ticked and labelled *Sub-assembly* / *Part*. Click **Check out all ticked** (or untick any you won't edit). Anything someone else has checked out is listed and skipped. Toolbox/library files outside the vault and virtual/imported parts stored inside the assembly aren't included.
 - Works without SolidWorks open, same as v0.5 (open SolidWorks → saved list → hidden SolidWorks). Lists saved by v0.5 only had sub-assemblies, so those are looked up again once.
 - Checking out many files (e.g. a whole aircraft, ~40 files) can take a minute.
@@ -22,7 +28,7 @@
 - v0.2.0: installs Git for you, requires GitHub sign-in.
 
 ## Download
-- **PartLock-v0.6.0.zip**: unzip anywhere and run `PartLock.exe`, or
+- **PartLock-v0.7.0.zip**: unzip anywhere and run `PartLock.exe`, or
 - **PartLock.exe**: the app on its own.
 
 ## Requirements

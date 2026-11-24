@@ -143,6 +143,7 @@ namespace PartLock.UI
 
             _status.Text = "Checking out…";
             await _vault.CheckOutAsync(paths);
+            PartLock.Platform.TeamNotify.Send(_vault.RepoRoot, PartLock.Platform.TeamEvent.CheckOut, await WhoAsync(), paths);
             return (paths.Count == 1 ? file.FileName + " is" : paths.Count + " files are") +
                    " checked out to you and can be edited now.\n\nIf it's already open in SolidWorks, close it and open it again.";
         }
@@ -187,6 +188,8 @@ namespace PartLock.UI
             _status.Text = "Checking in…";
             List<string> toCommit = await SubAssemblyPrompt.AddSavedListsAsync(_vault, new List<string> { file.Path });
             await _vault.CheckInAsync(toCommit, message, keep);
+            PartLock.Platform.TeamNotify.Send(_vault.RepoRoot, PartLock.Platform.TeamEvent.CheckIn, await WhoAsync(),
+                new[] { file.Path }, message);
             return file.FileName + " is checked in and uploaded to GitHub.";
         }
 
@@ -204,7 +207,23 @@ namespace PartLock.UI
 
             _status.Text = "Undoing…";
             await _vault.UndoCheckOutAsync(new[] { file.Path });
+            PartLock.Platform.TeamNotify.Send(_vault.RepoRoot, PartLock.Platform.TeamEvent.Undo, await WhoAsync(), new[] { file.Path });
             return "Done. " + file.FileName + " is back to the latest checked-in version.";
+        }
+
+        private async Task<string> WhoAsync()
+        {
+            string name = null;
+            try
+            {
+                Tuple<string, string> identity = await _vault.GetCommitIdentityAsync();
+                if (identity != null) name = identity.Item1;
+            }
+            catch (Exception) { }
+            string login = _vault.ServerUserName;
+            if (string.IsNullOrWhiteSpace(name)) name = login ?? "Someone";
+            return !string.IsNullOrEmpty(login) && !string.Equals(login, name, StringComparison.OrdinalIgnoreCase)
+                ? name + " (@" + login + ")" : name;
         }
 
         private void Log(string line)
