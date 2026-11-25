@@ -60,8 +60,12 @@ namespace PartLock.Platform
         {
             get
             {
+#if NETFRAMEWORK
                 try { return Type.GetTypeFromProgID("SldWorks.Application", false) != null; }
                 catch (Exception) { return false; }
+#else
+                return false; // macOS/Linux build: no SolidWorks
+#endif
             }
         }
 
@@ -69,13 +73,20 @@ namespace PartLock.Platform
         {
             get
             {
+#if NETFRAMEWORK
                 try { object o = Marshal.GetActiveObject("SldWorks.Application"); Marshal.ReleaseComObject(o); return true; }
                 catch (Exception) { return false; }
+#else
+                return false;
+#endif
             }
         }
 
         private static List<string> Query(string assemblyPath, bool startIfNotRunning)
         {
+#if !NETFRAMEWORK
+            return null; // macOS/Linux build: no SolidWorks to ask
+#else
             object sw = null;
             bool startedByUs = false;
             try
@@ -128,6 +139,7 @@ namespace PartLock.Platform
                 }
                 try { Marshal.ReleaseComObject(sw); } catch (Exception) { }
             }
+#endif
         }
 
         // ------------------------------------------------------------------

@@ -1,11 +1,18 @@
-# Publishes the prebuilt app in release/ as a GitHub release, tagged with the
-# <Version> from PartLock.csproj. Re-running replaces that release's files.
+# Publishes the prebuilt Windows app in release/ as a GitHub release, tagged with the
+# <Version> from src/PartLock/PartLock.csproj, then builds the macOS app on a Mac runner and
+# adds PartLock.dmg + PartLock-mac.zip to the same release. Re-running replaces that release's files
+# (same version = no update prompt for anyone).
 name: Publish release
 
 on:
   push:
     paths:
       - "release/**"
+      - "src/PartLock.Mac/**"
+      - "src/PartLock/Core/**"
+      - "src/PartLock/Platform/TeamNotify.cs"
+      - "src/PartLock/Platform/SolidWorksRefs.cs"
+      - "mac/**"
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
@@ -43,3 +50,31 @@ jobs:
             gh release create "$TAG" $files --title "PartLock $TAG" \
               --notes-file release/RELEASE-NOTES.md --target "$GITHUB_SHA" --latest
           fi
+
+  mac:
+    needs: publish
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build PartLock for macOS
+        run: ./mac/build-mac.sh
+
+      - name: Add the Mac files to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/PartLock/PartLock.csproj | head -1)
+          gh release upload "v$version" mac-dist/PartLock.dmg mac-dist/PartLock-mac.zip --clobber
+
+      - name: Keep the smoke-test screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-smoke-test
+          path: mac-dist/smoke-test.png
+          if-no-files-found: ignore

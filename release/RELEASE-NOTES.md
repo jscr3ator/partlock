@@ -1,3 +1,15 @@
+## 🍎 Now on Mac
+**PartLock for macOS** is here: download **PartLock.dmg** below (one download for Apple Silicon and Intel Macs).
+
+1. Open **PartLock.dmg** and drag **PartLock** onto **Applications**.
+2. Open PartLock from Applications. The first time, macOS says it can't check it for malware (PartLock isn't registered with Apple). Follow **README - How to open PartLock** in the DMG window ([Apple's guide](https://support.apple.com/en-us/102445)): *System Settings → Privacy & Security → Open Anyway*. Only needed once.
+3. If macOS asks to install the **Command Line Tools**, click Install. That's Apple's Git, which PartLock needs.
+4. Sign in to GitHub in the browser window that opens, pick your team's repository, done.
+
+Same features as Windows: check out/in, locks, Get Latest, history, the changes bar, file-name search, GitHub account + repository switcher, team chat notifications with your GitHub picture, and in-app updates. Sub-assembly and part lists come from the lists Windows teammates save when they check in assemblies (Macs can't run SolidWorks). Edited code and other files work the same way.
+
+Windows users: nothing changes for you in this update.
+
 ## What's new in v0.7.1
 - **Team notifications post as the person.** In Discord, each message now shows the person's **GitHub profile picture and GitHub name** (synced from the account they're signed in with), and just says what happened, e.g. "🔒 Just checked out `Wing_Assembly.SLDASM`, `WING_SKIN.SLDPRT` in **DBF-Plane-V1**". Check-ins include their message underneath. Slack and Teams don't allow changing the sender, so there the GitHub name is in the text instead.
 

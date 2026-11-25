@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    PartLock for macOS (Avalonia). Shares the git/locking engine with the Windows app by
+    compiling the same Core files. Builds and runs on Linux too (used for testing and screenshots).
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>PartLock</AssemblyName>
+    <RootNamespace>PartLock.Mac</RootNamespace>
+    <Version>0.7.1</Version>
+    <Product>PartLock</Product>
+    <ApplicationIcon>../PartLock/Assets/app.ico</ApplicationIcon>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <NoWarn>$(NoWarn);SYSLIB0014;CS1998;CA1416</NoWarn>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../PartLock/Core/**/*.cs" Link="Core/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../PartLock/Platform/TeamNotify.cs" Link="Platform/TeamNotify.cs" />
+    <Compile Include="../PartLock/Platform/SolidWorksRefs.cs" Link="Platform/SolidWorksRefs.cs" />
+    <Compile Include="../PartLock/UI/DemoVaultService.cs" Link="Demo/DemoVaultService.cs" />
+    <Compile Include="../PartLock/AppSettings.cs" Link="AppSettings.cs" />
+    <EmbeddedResource Include="../PartLock/Assets/logo.png" LogicalName="PartLock.logo.png" />
+  </ItemGroup>
+</Project>

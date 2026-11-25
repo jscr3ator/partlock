@@ -12,6 +12,10 @@ PartLock is the small app that keeps our SolidWorks files from stepping on each 
 
 **Top-right corner:** the 📁 button shows which repository you're in (click it to open it on GitHub or switch to another one), and the **@you** button shows your GitHub account (click it to switch accounts or change the name on your check-ins).
 
+### On a Mac
+
+Download **PartLock.dmg** from the latest release, drag PartLock into **Applications**, then open it from there. The first time, macOS blocks it because it isn't registered with Apple: open the **README - How to open PartLock** link in the DMG window (Apple's guide) or go to **System Settings → Privacy & Security → Open Anyway**. If macOS offers to install the **Command Line Tools**, accept (that's Git). Everything else works like Windows. Assemblies check out their parts using lists saved by Windows teammates (Macs can't run SolidWorks).
+
 ## Handy extras
 
 - **Check out a whole assembly:** check out the main assembly and PartLock lists every sub-assembly and part it uses (all ticked) so you can check them all out at once; untick any you won't edit. SolidWorks doesn't need to be open (PartLock uses a saved list, or starts SolidWorks hidden for a moment).
