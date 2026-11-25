@@ -74,6 +74,9 @@ namespace PartLock.Platform
         };
 
         public bool Enabled { get { return !string.IsNullOrWhiteSpace(Webhook); } }
+
+        /// <summary>Post check-ins/uploads of non-CAD files too (code, docs...). On by default.</summary>
+        public bool IncludeOtherFiles { get; set; } = true;
     }
 
     public static class TeamNotify
@@ -112,6 +115,10 @@ namespace PartLock.Platform
                     {
                         config.Webhook = value;
                     }
+                    else if (string.Equals(key, "otherfiles", StringComparison.OrdinalIgnoreCase))
+                    {
+                        config.IncludeOtherFiles = !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
+                    }
                     else if (string.Equals(key, "notify", StringComparison.OrdinalIgnoreCase))
                     {
                         config.Events.Clear();
@@ -142,6 +149,7 @@ namespace PartLock.Platform
                     string key = raw.Split('=')[0].Trim();
                     if (string.Equals(key, "webhook", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(key, "notify", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(key, "otherfiles", StringComparison.OrdinalIgnoreCase) ||
                         raw.StartsWith("# PartLock team settings", StringComparison.Ordinal)) continue;
                     keep.Add(raw);
                 }
@@ -155,6 +163,7 @@ namespace PartLock.Platform
                 text.AppendLine("notify=" + string.Join(",", EventNames
                     .Where(e => config.Events.Contains((TeamEvent)Enum.Parse(typeof(TeamEvent), e[1])))
                     .Select(e => e[0]).ToArray()));
+                text.AppendLine("otherfiles=" + (config.IncludeOtherFiles ? "on" : "off"));
             }
             foreach (string line in keep) if (line.Trim().Length > 0) text.AppendLine(line);
             File.WriteAllText(file, text.ToString(), new UTF8Encoding(false));
@@ -167,6 +176,12 @@ namespace PartLock.Platform
             TeamNotifyConfig config = Load(repoRoot);
             if (!config.Enabled || !config.Events.Contains(kind)) return;
             List<string> list = (paths ?? new string[0]).ToList();
+            if (kind == TeamEvent.CheckIn && !config.IncludeOtherFiles)
+            {
+                // Only announce CAD files; skip uploads that were only code/docs/etc.
+                list = list.Where(IsCadFile).ToList();
+                if (list.Count == 0) return;
+            }
             Task.Run(async () =>
             {
                 try { await PostAsync(config.Webhook, kind, who, list, message, repoRoot).ConfigureAwait(false); }
@@ -175,6 +190,13 @@ namespace PartLock.Platform
         }
 
         /// <summary>Sends a test message; throws with a readable message on failure.</summary>
+        /// <summary>A lockable CAD file type (SolidWorks, STEP, STL, DXF...).</summary>
+        public static bool IsCadFile(string path)
+        {
+            string ext = Path.GetExtension(path ?? string.Empty).TrimStart('.');
+            return ext.Length > 0 && PartLock.Core.VaultService.LockableExtensions.Any(e => string.Equals(e, ext, StringComparison.OrdinalIgnoreCase));
+        }
+
         public static Task SendTestAsync(string webhook, string repoRoot, TeamSender who)
         {
             return PostAsync(webhook, TeamEvent.Test, who, new List<string>(), null, repoRoot);

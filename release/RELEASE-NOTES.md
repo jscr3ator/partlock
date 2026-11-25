@@ -1,3 +1,7 @@
+## Mac update (same v0.8.0)
+- **Team notifications: choose whether uploads of other files are posted.** In 📁 → Team notifications…, under "Someone checks in", untick **Include uploads of other files** to only announce CAD check-ins (on by default). Windows gets this option in its next update.
+- Mac builds now carry a build number, so Mac-only fixes like this one arrive through the update link without a new release. (If you installed the Mac app on the day v0.8.0 came out, download PartLock.dmg once more; after that it updates itself.)
+
 ## What's new in v0.8.0
 - **New "Other files" tab – PartLock replaces GitHub Desktop.** Everything that isn't CAD (code, .txt, MATLAB, spreadsheets, docs…) lives here, with no check-out needed:
   - **My changes:** PartLock spots edited, new and deleted files by itself within a couple of seconds. They're ticked automatically; click one to see exactly what changed (green = added, red = removed). Type a message and click **Upload**. **Discard** throws away changes you don't want.

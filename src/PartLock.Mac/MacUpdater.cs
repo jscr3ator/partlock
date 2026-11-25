@@ -29,6 +29,8 @@ namespace PartLock.Mac
     {
         public const string Repository = "jscr3ator/partlock";
         public const string AssetName = "PartLock-mac.zip";
+        /// <summary>Text asset with the Mac build ("0.8.0.12"), so Mac-only fixes reach Macs without a new release.</summary>
+        public const string VersionAssetName = "PartLock-mac.version";
 
         public static Version Current
         {
@@ -36,6 +38,16 @@ namespace PartLock.Mac
             {
                 Version v = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
                 return new Version(v.Major, v.Minor, Math.Max(0, v.Build));
+            }
+        }
+
+        /// <summary>Release version plus the Mac build number (e.g. 0.8.0.12).</summary>
+        public static Version CurrentBuild
+        {
+            get
+            {
+                Version v = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0, 0);
+                return new Version(v.Major, v.Minor, Math.Max(0, v.Build), Math.Max(0, v.Revision));
             }
         }
 
@@ -57,17 +69,35 @@ namespace PartLock.Mac
             Version latest;
             if (!Version.TryParse(release.Tag.Trim().TrimStart('v', 'V'), out latest)) return null;
             latest = new Version(latest.Major, latest.Minor, Math.Max(0, latest.Build));
-            if (latest <= Current) return null;
+            if (latest < Current) return null;
 
             var update = new MacUpdate { Version = latest, Tag = release.Tag, Notes = release.Body, PageUrl = release.HtmlUrl };
+            string versionUrl = null;
             if (release.Assets != null)
                 foreach (GitHubAssetDto a in release.Assets)
-                    if (a != null && string.Equals(a.Name, AssetName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        update.ZipUrl = a.Url;
-                        update.Size = a.Size;
-                    }
-            return update.ZipUrl == null ? null : update; // a Windows-only release isn't an update for Mac
+                {
+                    if (a == null) continue;
+                    if (string.Equals(a.Name, AssetName, StringComparison.OrdinalIgnoreCase)) { update.ZipUrl = a.Url; update.Size = a.Size; }
+                    if (string.Equals(a.Name, VersionAssetName, StringComparison.OrdinalIgnoreCase)) versionUrl = a.Url;
+                }
+            if (update.ZipUrl == null) return null; // a Windows-only release isn't an update for Mac
+
+            if (latest == Current)
+            {
+                // Same release: only an update if the release carries a newer Mac build.
+                if (versionUrl == null) return null;
+                Version build;
+                try
+                {
+                    string text = (await DownloadTextAsync(versionUrl, ct)).Trim();
+                    if (!Version.TryParse(text, out build)) return null;
+                }
+                catch (Exception) { return null; }
+                build = new Version(build.Major, build.Minor, Math.Max(0, build.Build), Math.Max(0, build.Revision));
+                if (build <= CurrentBuild) return null;
+                update.Tag = release.Tag + " (Mac build " + build.Revision + ")";
+            }
+            return update;
         }
 
         /// <summary>
@@ -122,6 +152,16 @@ namespace PartLock.Mac
             psi.ArgumentList.Add("nohup sh -c " + Sh(script) + " >/dev/null 2>&1 &");
             Process.Start(psi);
             return true;
+        }
+
+        private static async Task<string> DownloadTextAsync(string url, CancellationToken ct)
+        {
+            using (var client = new WebClient())
+            using (ct.Register(client.CancelAsync))
+            {
+                client.Headers[HttpRequestHeader.UserAgent] = "PartLock";
+                return await client.DownloadStringTaskAsync(new Uri(url));
+            }
         }
 
         private static bool CanWrite(string dir)

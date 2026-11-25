@@ -10,11 +10,14 @@ ROOT="$PWD"
 OUT="$ROOT/mac-dist"
 WORK="$ROOT/mac-build"
 VERSION=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/PartLock/PartLock.csproj | head -1)
+# Mac build number: lets Mac-only fixes go out inside the same release (the updater compares it).
+MAC_BUILD="${MAC_BUILD:-${GITHUB_RUN_NUMBER:-0}}"
+FULL_VERSION="$VERSION.$MAC_BUILD"
 GIT_LFS_VERSION=3.5.1
 GCM_VERSION=2.6.1
 README_NAME="README - How to open PartLock.webloc"
 APPLE_HELP="https://support.apple.com/en-us/102445"
-echo "Building PartLock $VERSION for macOS"
+echo "Building PartLock $VERSION (Mac build $MAC_BUILD) for macOS"
 
 rm -rf "$OUT" "$WORK"
 mkdir -p "$OUT" "$WORK/dl"
@@ -23,7 +26,7 @@ mkdir -p "$OUT" "$WORK/dl"
 for rid in osx-arm64 osx-x64; do
   dotnet publish src/PartLock.Mac/PartLock.Mac.csproj -c Release -r "$rid" --self-contained \
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false -p:EnableCompressionInSingleFile=true -p:DebugType=none \
-    -p:Version="$VERSION" -o "$WORK/publish-$rid" -nologo
+    -p:Version="$VERSION" -p:AssemblyVersion="$FULL_VERSION" -p:FileVersion="$FULL_VERSION" -o "$WORK/publish-$rid" -nologo
 done
 
 APP="$WORK/PartLock.app"
@@ -36,7 +39,7 @@ for lib in libAvaloniaNative.dylib libHarfBuzzSharp.dylib libSkiaSharp.dylib; do
 done
 cp mac/launcher.sh "$APP/Contents/MacOS/PartLock"
 chmod +x "$APP/Contents/MacOS/"*
-sed "s/@VERSION@/$VERSION/g" mac/Info.plist.in > "$APP/Contents/Info.plist"
+sed -e "s/@VERSION@/$VERSION/g" -e "s/@BUILD@/$FULL_VERSION/g" mac/Info.plist.in > "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist"
 
 # ---- 2. Icon from the team logo
@@ -99,5 +102,6 @@ ls -la "$MNT"
 test -x "$MNT/PartLock.app/Contents/MacOS/PartLock" && test -L "$MNT/Applications" && test -f "$MNT/$README_NAME"
 hdiutil detach "$MNT" >/dev/null
 
+echo "$FULL_VERSION" > "$OUT/PartLock-mac.version"
 ls -la "$OUT"
 echo "Done: PartLock $VERSION for macOS"

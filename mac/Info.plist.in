@@ -5,7 +5,7 @@
   <key>CFBundleName</key><string>PartLock</string>
   <key>CFBundleDisplayName</key><string>PartLock</string>
   <key>CFBundleIdentifier</key><string>io.github.jscr3ator.partlock</string>
-  <key>CFBundleVersion</key><string>@VERSION@</string>
+  <key>CFBundleVersion</key><string>@BUILD@</string>
   <key>CFBundleShortVersionString</key><string>@VERSION@</string>
   <key>CFBundleExecutable</key><string>PartLock</string>
   <key>CFBundleIconFile</key><string>PartLock</string>

@@ -15,6 +15,7 @@ namespace PartLock.UI
         private readonly CheckBox _checkIn;
         private readonly CheckBox _undo;
         private readonly CheckBox _force;
+        private readonly CheckBox _others;
         private readonly Label _status;
         private readonly Button _test;
 
@@ -35,7 +36,7 @@ namespace PartLock.UI
             MaximizeBox = false;
             ShowInTaskbar = false;
             if (Theme.AppIcon != null) Icon = Theme.AppIcon;
-            ClientSize = new Size(600, 430);
+            ClientSize = new Size(600, 460);
 
             var root = new TableLayoutPanel
             {
@@ -92,7 +93,11 @@ namespace PartLock.UI
             _checkOut = MakeCheck("Someone checks out", config.Events.Contains(TeamEvent.CheckOut));
             _undo = MakeCheck("Someone undoes a check-out", config.Events.Contains(TeamEvent.Undo));
             _force = MakeCheck("A team lead force-unlocks someone's file", config.Events.Contains(TeamEvent.ForceUnlock));
-            events.Controls.AddRange(new Control[] { _checkIn, _checkOut, _undo, _force });
+            _others = MakeCheck("Include uploads of other files (code, docs, MATLAB\u2026), not just CAD", config.IncludeOtherFiles);
+            _others.Margin = new Padding(22, 0, 0, 2);
+            _others.Enabled = _checkIn.Checked;
+            _checkIn.CheckedChanged += delegate { _others.Enabled = _checkIn.Checked; };
+            events.Controls.AddRange(new Control[] { _checkIn, _others, _checkOut, _undo, _force });
             root.Controls.Add(events, 0, 3);
 
             root.Controls.Add(new Label
@@ -194,6 +199,7 @@ namespace PartLock.UI
             if (_checkIn.Checked) config.Events.Add(TeamEvent.CheckIn);
             if (_undo.Checked) config.Events.Add(TeamEvent.Undo);
             if (_force.Checked) config.Events.Add(TeamEvent.ForceUnlock);
+            config.IncludeOtherFiles = _others.Checked;
             Result = config;
             DialogResult = DialogResult.OK;
             Close();

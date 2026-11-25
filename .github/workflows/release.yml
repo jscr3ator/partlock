@@ -69,7 +69,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/PartLock/PartLock.csproj | head -1)
-          gh release upload "v$version" mac-dist/PartLock.dmg mac-dist/PartLock-mac.zip --clobber
+          gh release upload "v$version" mac-dist/PartLock.dmg mac-dist/PartLock-mac.zip mac-dist/PartLock-mac.version --clobber
 
       - name: Keep the smoke-test screenshot
         if: always()

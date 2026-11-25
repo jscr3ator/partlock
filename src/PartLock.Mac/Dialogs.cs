@@ -258,6 +258,9 @@ namespace PartLock.Mac
             var checkOut = new CheckBox { Content = "Someone checks out", IsChecked = config.Events.Contains(TeamEvent.CheckOut) };
             var undo = new CheckBox { Content = "Someone undoes a check-out", IsChecked = config.Events.Contains(TeamEvent.Undo) };
             var force = new CheckBox { Content = "A team lead force-unlocks someone's file", IsChecked = config.Events.Contains(TeamEvent.ForceUnlock) };
+            var others = new CheckBox { Content = "Include uploads of other files (code, docs, MATLAB\u2026), not just CAD", IsChecked = config.IncludeOtherFiles, Margin = new Thickness(24, 0, 0, 0) };
+            checkIn.IsCheckedChanged += (s, e) => others.IsEnabled = checkIn.IsChecked == true;
+            others.IsEnabled = checkIn.IsChecked == true;
             TextBlock status = Ui.Label(string.Empty, 12);
             TeamNotifyConfig result = null;
 
@@ -287,6 +290,7 @@ namespace PartLock.Mac
                 if (checkIn.IsChecked == true) c.Events.Add(TeamEvent.CheckIn);
                 if (undo.IsChecked == true) c.Events.Add(TeamEvent.Undo);
                 if (force.IsChecked == true) c.Events.Add(TeamEvent.ForceUnlock);
+                c.IncludeOtherFiles = others.IsChecked == true;
                 result = c;
                 w.Close();
             });
@@ -300,7 +304,7 @@ namespace PartLock.Mac
                 Ui.Heading("Post check-outs and check-ins to your team chat"),
                 Ui.Label("Paste a webhook link from Discord (Edit Channel → Integrations → Webhooks), Slack (Incoming Webhooks) or Microsoft Teams. "
                        + "It's saved in the vault, so everyone's PartLock posts to it after their next Get Latest. Posts show each person's GitHub name and picture.", 13, Ui.Muted),
-                url, checkIn, checkOut, undo, force,
+                url, checkIn, others, checkOut, undo, force,
                 Ui.Label("Anyone who can open the vault can see this link. Use a channel just for CAD updates.", 12, Ui.Muted),
                 status, grid);
             content.Margin = new Thickness(22, 18, 22, 16);
