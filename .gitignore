@@ -6,3 +6,4 @@ obj/
 shots/
 mac-dist/
 mac-build/
+.avalonia-build-tasks/
