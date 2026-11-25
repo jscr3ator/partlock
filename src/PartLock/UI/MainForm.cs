@@ -78,6 +78,10 @@ namespace PartLock.UI
         private string _repoFullName;
         private string _repoWebUrl;
         private ToolStripStatusLabel _updateLink;
+        private OtherFilesPanel _other;
+        private Panel _cadHost;
+        private Button _cadTab, _otherTab, _uploadBannerButton, _checkInBannerButton;
+        private bool _otherVisible;
         private PartLock.Platform.UpdateInfo _update;
 
         public MainForm(IVaultService vault, GitHubAccount account = null)
@@ -379,11 +383,18 @@ namespace PartLock.UI
                 Margin = new Padding(0)
             };
             table.Controls.Add(_changesText, 0, 0);
-            var go = Theme.CreateButton("Check In now", ButtonKind.Primary);
-            go.MinimumSize = new Size(0, 30);
-            go.Margin = new Padding(8, 0, 0, 0);
-            go.Click += CheckIn_Click;
-            table.Controls.Add(go, 1, 0);
+            var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, BackColor = _changesBanner.BackColor, Margin = new Padding(0), Anchor = AnchorStyles.Right };
+            _checkInBannerButton = Theme.CreateButton("Check In CAD", ButtonKind.Primary);
+            _checkInBannerButton.MinimumSize = new Size(0, 30);
+            _checkInBannerButton.Margin = new Padding(8, 0, 0, 0);
+            _checkInBannerButton.Click += CheckIn_Click;
+            _uploadBannerButton = Theme.CreateButton("Upload other files", ButtonKind.Primary);
+            _uploadBannerButton.MinimumSize = new Size(0, 30);
+            _uploadBannerButton.Margin = new Padding(8, 0, 0, 0);
+            _uploadBannerButton.Click += delegate { ShowOtherTab(true); };
+            buttons.Controls.Add(_checkInBannerButton);
+            buttons.Controls.Add(_uploadBannerButton);
+            table.Controls.Add(buttons, 1, 0);
             _changesBanner.Controls.Add(table);
             return _changesBanner;
         }
@@ -470,7 +481,7 @@ namespace PartLock.UI
                 Margin = new Padding(8, 10, 10, 0)
             };
             Theme.SetCueText(_search, "Search file names\u2026");
-            _search.TextChanged += delegate { ApplyFilter(GetSelectedPaths()); };
+            _search.TextChanged += delegate { ApplyFilter(GetSelectedPaths()); if (_other != null) _other.SetQuery(_search.Text); };
             filters.Controls.Add(_search);
 
             _filter = new ComboBox
@@ -603,7 +614,63 @@ namespace PartLock.UI
             };
             host.Controls.Add(_emptyLabel);
             _emptyLabel.BringToFront();
-            return host;
+            _cadHost = host;
+
+            // CAD | Other files tabs
+            var tabBar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, BackColor = Theme.Background, Padding = new Padding(20, 2, 20, 2) };
+            _cadTab = Theme.CreateButton("CAD", ButtonKind.Primary);
+            _cadTab.MinimumSize = new Size(0, 32);
+            _cadTab.Margin = new Padding(0, 0, 6, 0);
+            _cadTab.Click += delegate { ShowOtherTab(false); };
+            _otherTab = Theme.CreateButton("Other files", ButtonKind.Outline);
+            _otherTab.MinimumSize = new Size(0, 32);
+            _otherTab.Margin = new Padding(0);
+            _otherTab.Click += delegate { ShowOtherTab(true); };
+            tabBar.Controls.Add(_cadTab);
+            tabBar.Controls.Add(_otherTab);
+
+            _other = new OtherFilesPanel(_vault, RunBusyAsync, EnsureIdentityAsync, delegate { return ReloadAsync(false); },
+                delegate(IReadOnlyList<string> paths, string message)
+                {
+                    PartLock.Platform.TeamNotify.Send(_vault.RepoRoot, PartLock.Platform.TeamEvent.CheckIn, WhoAmI(), paths, message);
+                });
+            _other.CountsChanged += delegate { UpdateTabTitles(); UpdateActionButtons(); };
+            var otherHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(1), Margin = new Padding(0), BackColor = Theme.Panel, Visible = false };
+            otherHost.Paint += delegate(object sender, PaintEventArgs e) { Theme.DrawBorder(e.Graphics, otherHost.ClientRectangle, Theme.Border); };
+            otherHost.Controls.Add(_other);
+
+            var content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(20, 2, 20, 4), BackColor = Theme.Background };
+            host.Margin = new Padding(0);
+            host.Dock = DockStyle.Fill;
+            content.Controls.Add(host);
+            content.Controls.Add(otherHost);
+
+            var wrapper = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0), BackColor = Theme.Background };
+            wrapper.Controls.Add(content);
+            wrapper.Controls.Add(tabBar);
+            return wrapper;
+        }
+
+        private void ShowOtherTab(bool other)
+        {
+            _otherVisible = other;
+            _cadHost.Visible = !other;
+            _other.Parent.Visible = other;
+            StylePrimary(_cadTab, !other);
+            StylePrimary(_otherTab, other);
+            _filter.Visible = !other;
+            _checkOutButton.Visible = !other;
+            _checkInButton.Visible = !other;
+            _undoButton.Visible = !other;
+        }
+
+        private void UpdateTabTitles()
+        {
+            if (_cadTab == null) return;
+            int cad = _files.Count(f => f.IsLockable);
+            int other = _other == null ? 0 : _other.ChangeCount;
+            _cadTab.Text = "CAD" + (cad > 0 ? " (" + cad + ")" : string.Empty);
+            _otherTab.Text = "Other files" + (other > 0 ? " \u2022 " + other + " changed" : string.Empty);
         }
 
         private Control BuildActivityToggle()
@@ -1053,6 +1120,12 @@ namespace PartLock.UI
 
             _lastRefreshUtc = DateTime.UtcNow;
             ApplyFilter(keepSelection);
+            if (_other != null)
+            {
+                _other.SetFiles(_files);
+                if (fetchRemote) await _other.RefreshRemoteAsync();
+            }
+            UpdateTabTitles();
 
             if (!_busy)
             {
@@ -1495,12 +1568,17 @@ namespace PartLock.UI
             StylePrimary(_getLatestButton, edited == 0);
             if (_changesBanner != null)
             {
-                bool show = edited > 0;
+                int other = _other == null ? 0 : _other.ChangeCount;
+                bool show = edited > 0 || other > 0;
                 if (show)
                 {
-                    _changesText.Text = "You have " + FileCountText(edited) + " with changes that aren't on GitHub yet. "
-                                      + "Check In to upload them so the team gets them.";
+                    string what = edited > 0 && other > 0 ? FileCountText(edited) + " (CAD) and " + FileCountText(other) + " (other)"
+                                : edited > 0 ? FileCountText(edited) : FileCountText(other);
+                    _changesText.Text = "You have " + what + " with changes that aren't on GitHub yet. "
+                                      + (edited > 0 ? "Check In" : "Upload") + " so the team gets them.";
                 }
+                _checkInBannerButton.Visible = edited > 0;
+                _uploadBannerButton.Visible = other > 0;
                 if (_changesBanner.Visible != show) _changesBanner.Visible = show;
             }
             _undoButton.Enabled = !_busy && selected.Any(CanUndo);
@@ -1536,7 +1614,7 @@ namespace PartLock.UI
 
         private static bool IsMineToCheckIn(VaultFile file)
         {
-            return file != null &&
+            return file != null && (file.IsLockable || file.Lock != null) &&
                    (file.State == FileState.CheckedOutByMe ||
                     (file.State == FileState.ModifiedNotCheckedOut && (file.Lock == null || file.Lock.IsMine)) ||
                     file.State == FileState.NewFile ||
@@ -1557,7 +1635,7 @@ namespace PartLock.UI
                 ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 : new HashSet<string>(keepSelection, StringComparer.OrdinalIgnoreCase);
 
-            IEnumerable<VaultFile> view = _files;
+            IEnumerable<VaultFile> view = _files.Where(file => file.IsLockable || file.Lock != null);
             string filter = _filter == null ? "All files" : (_filter.SelectedItem as string ?? "All files");
 
             if (filter == "My check-outs")

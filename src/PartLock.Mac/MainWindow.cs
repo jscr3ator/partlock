@@ -11,6 +11,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using PartLock.Core;
 using PartLock.Platform;
 
@@ -44,6 +45,11 @@ namespace PartLock.Mac
         private string _sort = "name";
         private bool _sortAscending = true;
         private MacUpdate _update;
+        private OtherFilesView _other;
+        private Border _cadBorder, _otherBorder;
+        private Button _cadTab, _otherTab, _checkInBanner, _uploadBanner;
+        private readonly TextBlock _cadTabText = new TextBlock { Text = "CAD" };
+        private readonly TextBlock _otherTabText = new TextBlock { Text = "Other files" };
 
         public MainWindow(IVaultService vault, GitHubAccount account)
         {
@@ -95,7 +101,15 @@ namespace PartLock.Mac
             DockPanel.SetDock(_lockingBanner, Dock.Top);
             root.Children.Add(_lockingBanner);
 
-            _changesBanner = Banner(Ui.InfoBg, Ui.InfoText, string.Empty, "Check In now", async () => await CheckInFlowAsync(), out _changesText);
+            _changesBanner = Banner(Ui.InfoBg, Ui.InfoText, string.Empty, "Check In CAD", async () => await CheckInFlowAsync(), out _changesText);
+            _uploadBanner = Ui.Button("Upload other files", true, () => ShowOther(true));
+            _uploadBanner.Margin = new Thickness(8, 0, 0, 0);
+            var bannerGrid = (Grid)_changesBanner.Child;
+            _checkInBanner = (Button)bannerGrid.Children[1];
+            bannerGrid.Children.Remove(_checkInBanner);
+            var bannerButtons = Ui.Row(0, _checkInBanner, _uploadBanner);
+            Grid.SetColumn(bannerButtons, 1);
+            bannerGrid.Children.Add(bannerButtons);
             _changesBanner.IsVisible = false;
             DockPanel.SetDock(_changesBanner, Dock.Top);
             root.Children.Add(_changesBanner);
@@ -122,7 +136,7 @@ namespace PartLock.Mac
             DockPanel.SetDock(_activityToggle, Dock.Bottom);
             root.Children.Add(_activityToggle);
 
-            root.Children.Add(BuildList());
+            root.Children.Add(BuildTabs());
             return root;
         }
 
@@ -221,7 +235,7 @@ namespace PartLock.Mac
             foreach (Button b in new[] { _getLatest, _checkOut, _checkIn, _undo }) b.MinHeight = 38;
 
             _search = new TextBox { Watermark = "Search file names…", Width = 230, VerticalAlignment = VerticalAlignment.Center };
-            _search.TextChanged += (s, e) => ApplyFilter();
+            _search.TextChanged += (s, e) => { ApplyFilter(); if (_other != null) _other.SetQuery(_search.Text); };
             _filter = new ComboBox
             {
                 Width = 190, VerticalAlignment = VerticalAlignment.Center,
@@ -236,6 +250,62 @@ namespace PartLock.Mac
             Grid.SetColumn(right, 1);
             grid.Children.Add(right);
             return grid;
+        }
+
+        private Control BuildTabs()
+        {
+            _cadTab = Ui.Button("CAD", true, () => ShowOther(false));
+            _otherTab = Ui.Button("Other files", false, () => ShowOther(true));
+            _cadTab.Content = _cadTabText;
+            _otherTab.Content = _otherTabText;
+            var bar = Ui.Row(6, _cadTab, _otherTab);
+            bar.Margin = new Thickness(20, 6, 20, 0);
+
+            _cadBorder = (Border)BuildList();
+            _other = new OtherFilesView(_vault, RunBusyAsync, EnsureIdentityAsync, () => ReloadAsync(false),
+                (paths, message) => TeamNotify.Send(_vault.RepoRoot, TeamEvent.CheckIn, WhoAmI(), paths, message), () => this);
+            _other.CountsChanged += () => { UpdateTabTitles(); UpdateButtons(); };
+            _otherBorder = new Border
+            {
+                Background = Ui.Panel, BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+                Margin = new Thickness(20, 4, 20, 4), Child = _other, IsVisible = false
+            };
+            var stack = new Grid();
+            stack.Children.Add(_cadBorder);
+            stack.Children.Add(_otherBorder);
+            var dock = new DockPanel();
+            DockPanel.SetDock(bar, Dock.Top);
+            dock.Children.Add(bar);
+            dock.Children.Add(stack);
+            return dock;
+        }
+
+        private void ShowOther(bool other)
+        {
+            _cadBorder.IsVisible = !other;
+            _otherBorder.IsVisible = other;
+            Ui.SetPrimary(_cadTab, !other);
+            Ui.SetPrimary(_otherTab, other);
+            _filter.IsVisible = !other;
+            _checkOut.IsVisible = !other;
+            _checkIn.IsVisible = !other;
+            _undo.IsVisible = !other;
+        }
+
+        private void UpdateTabTitles()
+        {
+            if (_cadTab == null) return;
+            int cad = _files.Count(f => f.IsLockable);
+            int other = _other == null ? 0 : _other.ChangeCount;
+            _cadTabText.Text = "CAD" + (cad > 0 ? " (" + cad + ")" : string.Empty);
+            _otherTabText.Text = "Other files" + (other > 0 ? " \u2022 " + other + " changed" : string.Empty);
+            // The first update can land while the window is doing its first layout pass, which
+            // drops the re-measure; ask again once that pass is done.
+            Dispatcher.UIThread.Post(() =>
+            {
+                foreach (Avalonia.Layout.Layoutable c in new Avalonia.Layout.Layoutable[] { _cadTabText, _otherTabText, _cadTab, _otherTab, _cadTab.Parent as Avalonia.Layout.Layoutable })
+                    c?.InvalidateMeasure();
+            }, DispatcherPriority.Background);
         }
 
         private const string Columns = "260,220,210,150,110";
@@ -401,6 +471,12 @@ namespace PartLock.Mac
             if (files != null) _files.AddRange(files);
             _lastRefreshUtc = DateTime.UtcNow;
             ApplyFilter(keep);
+            if (_other != null)
+            {
+                _other.SetFiles(_files);
+                if (fetchRemote) await _other.RefreshRemoteAsync();
+            }
+            UpdateTabTitles();
             if (!_busy) UpdateSummary();
         }
 
@@ -828,9 +904,16 @@ namespace PartLock.Mac
             _checkIn.Content = pending > 0 ? "Check In (" + pending + ")…" : "Check In…";
             Ui.SetPrimary(_checkIn, edited > 0);
             Ui.SetPrimary(_getLatest, edited == 0);
-            _changesBanner.IsVisible = edited > 0;
-            if (edited > 0)
-                _changesText.Text = "You have " + Ui.FileCount(edited) + " with changes that aren't on GitHub yet. Check In to upload them so the team gets them.";
+            int other = _other == null ? 0 : _other.ChangeCount;
+            _changesBanner.IsVisible = edited > 0 || other > 0;
+            if (_checkInBanner != null) _checkInBanner.IsVisible = edited > 0;
+            if (_uploadBanner != null) _uploadBanner.IsVisible = other > 0;
+            if (edited > 0 || other > 0)
+            {
+                string what = edited > 0 && other > 0 ? Ui.FileCount(edited) + " (CAD) and " + Ui.FileCount(other) + " (other)"
+                            : Ui.FileCount(edited > 0 ? edited : other);
+                _changesText.Text = "You have " + what + " with changes that aren't on GitHub yet. " + (edited > 0 ? "Check In" : "Upload") + " so the team gets them.";
+            }
         }
 
         private static bool CanCheckOut(VaultFile f)
@@ -845,7 +928,7 @@ namespace PartLock.Mac
 
         private static bool IsMineToCheckIn(VaultFile f)
         {
-            return f != null && (f.State == FileState.CheckedOutByMe ||
+            return f != null && (f.IsLockable || f.Lock != null) && (f.State == FileState.CheckedOutByMe ||
                 (f.State == FileState.ModifiedNotCheckedOut && (f.Lock == null || f.Lock.IsMine)) ||
                 f.State == FileState.NewFile || f.State == FileState.Changed || f.State == FileState.Deleted);
         }
@@ -864,7 +947,7 @@ namespace PartLock.Mac
         {
             if (_list == null) return;
             if (keep == null) keep = new HashSet<string>(Selected().Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
-            IEnumerable<VaultFile> view = _files;
+            IEnumerable<VaultFile> view = _files.Where(f => f.IsLockable || f.Lock != null);
             switch (_filter.SelectedIndex)
             {
                 case 1: view = view.Where(f => f.State == FileState.CheckedOutByMe); break;

@@ -179,6 +179,13 @@ namespace PartLock.Core
                     string.Join(", ", needCheckOut.ToArray()) + " before checking it in.");
             }
 
+            List<string> unresolved = requested.Where(p => HasConflictMarkers(FullPath(p))).ToList();
+            if (unresolved.Count > 0)
+            {
+                throw new VaultException("Fix the overlapping changes in " + string.Join(", ", unresolved.ToArray()) + " first: " +
+                    "open the file, keep what you want between the <<<<<<< and >>>>>>> lines, delete the marker lines, and save.");
+            }
+
             foreach (string path in requested)
             {
                 ct.ThrowIfCancellationRequested();
@@ -442,9 +449,112 @@ namespace PartLock.Core
                 }
 
                 LogLine("Someone else checked in first. Getting their changes and trying again…");
-                await GitAsync(new string[] { "pull", "--rebase", "--autostash" }, ct).ConfigureAwait(false);
+                GitResult pull = await GitAsync(new string[] { "pull", "--rebase", "--autostash" }, ct, null, false).ConfigureAwait(false);
+                if (pull.ExitCode != 0) await HandleOverlapAsync(pull, ct).ConfigureAwait(false); // always throws
                 hasUpstream = true;
             }
+        }
+
+        /// <summary>
+        /// A teammate uploaded changes to the same lines of the same file(s). For text files this
+        /// works like GitHub Desktop: take their version, put both versions in each file between
+        /// conflict markers, and leave the edits unuploaded so the user can fix and upload again.
+        /// Binary/lockable files keep the old behaviour (stop, nothing changed). Always throws.
+        /// </summary>
+        private async Task HandleOverlapAsync(GitResult pull, CancellationToken ct)
+        {
+            string details = ((pull.StdErr ?? string.Empty) + "\n" + (pull.StdOut ?? string.Empty)).Trim();
+            GitResult unmerged = await GitAsync(new[] { "diff", "--name-only", "--diff-filter=U", "-z" }, ct, null, false).ConfigureAwait(false);
+            List<string> conflicted = SplitNul(unmerged.StdOut).Select(Norm).Where(p => p.Length > 0).ToList();
+            await GitAsync(new[] { "rebase", "--abort" }, ct, null, false).ConfigureAwait(false);
+
+            if (conflicted.Count == 0) throw new VaultException(GitRunner.FriendlyError(pull.StdErr), details);
+
+            Dictionary<string, bool> lockable = await GetLockableMapAsync(conflicted, ct).ConfigureAwait(false);
+            bool anyBinary = conflicted.Any(p => (lockable.ContainsKey(p) && lockable[p]) || LooksLockableByExtension(p) || !IsTextFile(FullPath(p)));
+            if (anyBinary)
+            {
+                throw new VaultException(
+                    "Someone uploaded a newer version of " + string.Join(", ", conflicted.ToArray()) + " while you were working on it. " +
+                    "Nothing was uploaded. Use Undo on your copy (save it elsewhere first if you need it), Get Latest, and try again.", details);
+            }
+
+            // Undo the local (unpushed) commit(s) but keep the edits, park them, update, put them back.
+            GitResult baseRev = await GitAsync(new[] { "merge-base", "HEAD", "@{u}" }, ct, null, false).ConfigureAwait(false);
+            string mergeBase = (baseRev.StdOut ?? string.Empty).Trim();
+            if (baseRev.ExitCode != 0 || mergeBase.Length == 0) throw new VaultException(GitRunner.FriendlyError(pull.StdErr), details);
+            await GitAsync(new[] { "reset", "-q", "--mixed", mergeBase }, ct).ConfigureAwait(false);
+            await GitAsync(new[] { "stash", "push", "--include-untracked", "-m", "PartLock: your edits while getting a teammate's version" }, ct).ConfigureAwait(false);
+            await GitAsync(new[] { "merge", "--ff-only", "@{u}" }, ct, null, true, 3600000).ConfigureAwait(false);
+            GitResult pop = await GitAsync(new[] { "stash", "pop" }, ct, null, false).ConfigureAwait(false);
+            if (pop.ExitCode != 0)
+            {
+                // Markers are in the files now; clear git's "unmerged" state so the files just show
+                // as Changed, and drop the parked copy (its content is in the files).
+                await GitAsync(new[] { "reset", "-q" }, ct, null, false).ConfigureAwait(false);
+                GitResult stashes = await GitAsync(new[] { "stash", "list" }, ct, null, false).ConfigureAwait(false);
+                if ((stashes.StdOut ?? string.Empty).Contains("PartLock: your edits"))
+                {
+                    foreach (string p in conflicted) RelabelConflictMarkers(FullPath(p));
+                    bool applied = conflicted.Any(p => File.Exists(FullPath(p)) && HasConflictMarkers(FullPath(p)));
+                    if (applied) await GitAsync(new[] { "stash", "drop" }, ct, null, false).ConfigureAwait(false);
+                    else
+                        throw new VaultException("A teammate changed the same files at the same time, and PartLock couldn't combine them automatically. " +
+                            "Your edits are saved in Git's stash (\"PartLock: your edits\"). Ask a programmer to help, or contact your team lead.", details + "\n" + pop.StdErr);
+                }
+            }
+
+            throw new VaultException(
+                "A teammate changed the same part of " + string.Join(", ", conflicted.ToArray()) + " at the same time as you. " +
+                "PartLock got their version and put both versions in the file, between lines starting with <<<<<<< and >>>>>>>. " +
+                "Open the file, keep what you want, delete those marker lines, save, then upload again. Nothing was uploaded yet.", details);
+        }
+
+        /// <summary>Replaces git's marker labels ("Updated upstream" / "Stashed changes") with plain words.</summary>
+        private static void RelabelConflictMarkers(string fullPath)
+        {
+            try
+            {
+                if (!File.Exists(fullPath) || !IsTextFile(fullPath)) return;
+                string text = File.ReadAllText(fullPath);
+                string relabeled = text
+                    .Replace("<<<<<<< Updated upstream", "<<<<<<< teammate's version (from GitHub)")
+                    .Replace(">>>>>>> Stashed changes", ">>>>>>> your version");
+                if (relabeled != text) File.WriteAllText(fullPath, relabeled, new System.Text.UTF8Encoding(false));
+            }
+            catch (Exception) { }
+        }
+
+        /// <summary>True when a text file still contains merge conflict markers.</summary>
+        public static bool HasConflictMarkers(string fullPath)
+        {
+            try
+            {
+                if (!File.Exists(fullPath) || new FileInfo(fullPath).Length > 20 * 1024 * 1024 || !IsTextFile(fullPath)) return false;
+                bool start = false, mid = false;
+                foreach (string line in File.ReadLines(fullPath))
+                {
+                    if (line.StartsWith("<<<<<<< ", StringComparison.Ordinal)) start = true;
+                    else if (start && line == "=======") mid = true;
+                    else if (mid && line.StartsWith(">>>>>>> ", StringComparison.Ordinal)) return true;
+                }
+            }
+            catch (Exception) { }
+            return false;
+        }
+
+        private static bool IsTextFile(string fullPath)
+        {
+            try
+            {
+                if (!File.Exists(fullPath)) return true;
+                byte[] head = new byte[8000];
+                int n;
+                using (FileStream s = File.OpenRead(fullPath)) n = s.Read(head, 0, head.Length);
+                for (int i = 0; i < n; i++) if (head[i] == 0) return false;
+                return true;
+            }
+            catch (Exception) { return false; }
         }
 
         private async Task UnlockAsync(VaultFile file, bool force, CancellationToken ct)

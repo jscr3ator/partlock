@@ -22,7 +22,7 @@ mkdir -p "$OUT" "$WORK/dl"
 # ---- 1. The app for each CPU (single file + shared universal libraries)
 for rid in osx-arm64 osx-x64; do
   dotnet publish src/PartLock.Mac/PartLock.Mac.csproj -c Release -r "$rid" --self-contained \
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false -p:DebugType=none \
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false -p:EnableCompressionInSingleFile=true -p:DebugType=none \
     -p:Version="$VERSION" -o "$WORK/publish-$rid" -nologo
 done
 

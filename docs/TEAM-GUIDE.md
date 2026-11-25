@@ -16,6 +16,13 @@ PartLock is the small app that keeps our SolidWorks files from stepping on each 
 
 Download **PartLock.dmg** from the latest release, drag PartLock into **Applications**, then open it from there. The first time, macOS blocks it because it isn't registered with Apple: open the **README - How to open PartLock** link in the DMG window (Apple's guide) or go to **System Settings → Privacy & Security → Open Anyway**. If macOS offers to install the **Command Line Tools**, accept (that's Git). Everything else works like Windows. Assemblies check out their parts using lists saved by Windows teammates (Macs can't run SolidWorks).
 
+## Other files (code, docs, MATLAB…)
+
+Everything that isn't CAD is in the **Other files** tab, so you don't need GitHub Desktop.
+Just edit files in the vault folder: PartLock notices by itself, ticks them and shows "Other files • N changed".
+Click a file to see what changed, type a message, click **Upload**. **Incoming** shows what teammates uploaded (Get Latest brings it down), **History** shows recent changes.
+If a teammate changed the same lines, the file shows **Fix overlap**: open it, keep what you want between the `<<<<<<<` and `>>>>>>>` lines, delete those marker lines, save, and upload again.
+
 ## Handy extras
 
 - **Check out a whole assembly:** check out the main assembly and PartLock lists every sub-assembly and part it uses (all ticked) so you can check them all out at once; untick any you won't edit. SolidWorks doesn't need to be open (PartLock uses a saved list, or starts SolidWorks hidden for a moment).

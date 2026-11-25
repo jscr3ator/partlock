@@ -11,7 +11,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>0.7.1</Version>
+    <Version>0.8.0</Version>
     <Product>PartLock</Product>
     <Description>Check out / check in CAD files on top of Git LFS locking</Description>
   </PropertyGroup>

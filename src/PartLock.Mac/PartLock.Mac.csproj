@@ -10,7 +10,7 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>PartLock</AssemblyName>
     <RootNamespace>PartLock.Mac</RootNamespace>
-    <Version>0.7.1</Version>
+    <Version>0.8.0</Version>
     <Product>PartLock</Product>
     <ApplicationIcon>../PartLock/Assets/app.ico</ApplicationIcon>
     <InvariantGlobalization>true</InvariantGlobalization>

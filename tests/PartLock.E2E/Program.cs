@@ -443,6 +443,90 @@ namespace PartLock.E2E
                 }
             });
 
+            // ---- "Other files" tab: any file type, incoming check-ins, history, line-by-line changes
+            await Step("o1. a text file check-in shows up as Incoming for the teammate", async () =>
+            {
+                Directory.CreateDirectory(Path.Combine(_aliceRoot, "notes"));
+                File.WriteAllText(Path.Combine(_aliceRoot, "notes", "README.txt"), "first line\n");
+                var files = await _alice.GetFilesAsync(false);
+                Require(Find(files, "notes/README.txt").State == FileState.NewFile, "README.txt should be New for alice");
+                await _alice.CheckInAsync(new[] { "notes/README.txt" }, "Add notes", false);
+
+                var bob = (VaultService)_bob;
+                await bob.FetchAsync();
+                var incoming = await bob.GetIncomingAsync();
+                var notes = incoming.FirstOrDefault(c => c.Message == "Add notes");
+                Require(notes != null, "bob should see 'Add notes' as incoming, saw: " + string.Join(" | ", incoming.Select(c => c.Message)));
+                Require(notes.Files.Any(f => f.Path == "notes/README.txt" && f.Kind == 'A'), "incoming check-in should list notes/README.txt as Added");
+                string diff = await bob.GetCommitDiffAsync(notes.Commit, "notes/README.txt");
+                Require(diff.Contains("+first line"), "commit diff should show the added line, got: " + diff);
+            });
+
+            await Step("o2. after Get Latest nothing is incoming and history lists the check-in first", async () =>
+            {
+                var bob = (VaultService)_bob;
+                await bob.GetLatestAsync();
+                Require((await bob.GetIncomingAsync()).Count == 0, "nothing should be incoming after Get Latest");
+                var recent = await bob.GetRecentCheckInsAsync(10);
+                Require(recent.Count >= 2 && recent[0].Message == "Add notes", "newest check-in should be 'Add notes', got " + (recent.Count > 0 ? recent[0].Message : "none"));
+                for (int i = 1; i < recent.Count; i++) Require(recent[i - 1].Date >= recent[i].Date, "history should be newest first");
+            });
+
+            await Step("o3. local changes show line by line (edited text file and new MATLAB file)", async () =>
+            {
+                var bob = (VaultService)_bob;
+                File.AppendAllText(Path.Combine(_bobRoot, "notes", "README.txt"), "second line\n");
+                File.WriteAllText(Path.Combine(_bobRoot, "notes", "calc.m"), "x = 1;\n");
+                string edited = await bob.GetLocalDiffAsync("notes/README.txt");
+                Require(edited.Contains("+second line") && !edited.Contains("+first line"), "edited diff should add only 'second line', got: " + edited);
+                string added = await bob.GetLocalDiffAsync("notes/calc.m");
+                Require(added.Contains("+x = 1;"), "new file diff should show its lines, got: " + added);
+                string binary = await bob.GetLocalDiffAsync(Spar);
+                Require(binary.StartsWith("("), "a CAD file should get a note, not a diff, got: " + binary);
+                var files = await bob.GetFilesAsync(false);
+                Require(Find(files, "notes/README.txt").State == FileState.Changed && Find(files, "notes/calc.m").State == FileState.NewFile,
+                    "README.txt should be Changed and calc.m New");
+                await bob.CheckInAsync(new[] { "notes/README.txt", "notes/calc.m" }, "Notes + calc", false);
+            });
+
+            await Step("p1. same line edited by both: second upload gets both versions marked, nothing lost", async () =>
+            {
+                await _alice.GetLatestAsync();
+                await _bob.GetLatestAsync();
+                string aliceFile = Path.Combine(_aliceRoot, "notes", "README.txt");
+                string bobFile = Path.Combine(_bobRoot, "notes", "README.txt");
+                File.WriteAllText(aliceFile, "first line\nALICE second line\n");
+                File.WriteAllText(bobFile, "first line\nBOB second line\n");
+                File.WriteAllText(Path.Combine(_bobRoot, "notes", "other.txt"), "bob's other file\n");
+                await _alice.CheckInAsync(new[] { "notes/README.txt" }, "Alice edits notes", false);
+
+                bool threw = false;
+                try { await _bob.CheckInAsync(new[] { "notes/README.txt", "notes/other.txt" }, "Bob edits notes", false); }
+                catch (VaultException ex) { threw = ex.Message.Contains("README.txt") && ex.Message.Contains("<<<<<<<"); }
+                Require(threw, "bob's upload should stop with an 'overlapping changes' message naming README.txt");
+
+                string merged = File.ReadAllText(bobFile);
+                Require(merged.Contains("ALICE second line") && merged.Contains("BOB second line") && merged.Contains("<<<<<<<"),
+                    "bob's file should contain both versions between markers, got: " + merged);
+                Require(File.Exists(Path.Combine(_bobRoot, "notes", "other.txt")), "bob's other new file must not be lost");
+                Require(!Directory.Exists(Path.Combine(_bobRoot, ".git", "rebase-merge")) && !Directory.Exists(Path.Combine(_bobRoot, ".git", "rebase-apply")),
+                    "the vault must not be left half-way through an update");
+                var files = await _bob.GetFilesAsync(false);
+                Require(Find(files, "notes/README.txt").State == FileState.Changed && Find(files, "notes/other.txt").State == FileState.NewFile,
+                    "README.txt should be Changed and other.txt New after the overlap");
+            });
+
+            await Step("p2. a file with markers can't be uploaded; after fixing it uploads and reaches the teammate", async () =>
+            {
+                await ExpectVaultException(() => _bob.CheckInAsync(new[] { "notes/README.txt" }, "markers", false), "uploading a file that still has conflict markers");
+                File.WriteAllText(Path.Combine(_bobRoot, "notes", "README.txt"), "first line\nALICE and BOB second line\n");
+                await _bob.CheckInAsync(new[] { "notes/README.txt", "notes/other.txt" }, "Bob merges notes", false);
+                await _alice.GetLatestAsync();
+                Require(File.ReadAllText(Path.Combine(_aliceRoot, "notes", "README.txt")) == "first line\nALICE and BOB second line\n",
+                    "alice should get bob's merged file");
+                Require(File.Exists(Path.Combine(_aliceRoot, "notes", "other.txt")), "alice should get bob's other file");
+            });
+
             Console.WriteLine();
             Console.WriteLine((_total - _failed) + "/" + _total + " checks passed.");
             return _failed == 0 ? 0 : 1;

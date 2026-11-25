@@ -1,3 +1,13 @@
+## What's new in v0.8.0
+- **New "Other files" tab – PartLock replaces GitHub Desktop.** Everything that isn't CAD (code, .txt, MATLAB, spreadsheets, docs…) lives here, with no check-out needed:
+  - **My changes:** PartLock spots edited, new and deleted files by itself within a couple of seconds. They're ticked automatically; click one to see exactly what changed (green = added, red = removed). Type a message and click **Upload**. **Discard** throws away changes you don't want.
+  - **Incoming:** what teammates uploaded that you don't have yet, with who, when and their message. **Get Latest** brings it down.
+  - **History:** recent check-ins and uploads for the whole vault, each with its files and line-by-line changes.
+  - The tab title shows how many files changed, and the blue bar offers **Upload other files** so nothing gets forgotten.
+- **CAD tab** is the familiar list, now only CAD files. Check Out / Check In stay there.
+- **Two people edited the same lines?** Like GitHub Desktop, PartLock takes your teammate's version and puts both versions in the file between `<<<<<<<` and `>>>>>>>` lines ("teammate's version" / "your version"). The file shows **Fix overlap**; keep what you want, delete the marker lines, save and upload. Nothing is lost and PartLock won't upload a file that still has markers in it.
+- Mac: smaller download.
+
 ## 🍎 Now on Mac
 **PartLock for macOS** is here: download **PartLock.dmg** below (one download for Apple Silicon and Intel Macs).
 
@@ -10,7 +20,7 @@ Same features as Windows: check out/in, locks, Get Latest, history, the changes 
 
 Windows users: nothing changes for you in this update.
 
-## What's new in v0.7.1
+## v0.7.1
 - **Team notifications post as the person.** In Discord, each message now shows the person's **GitHub profile picture and GitHub name** (synced from the account they're signed in with), and just says what happened, e.g. "🔒 Just checked out `Wing_Assembly.SLDASM`, `WING_SKIN.SLDPRT` in **DBF-Plane-V1**". Check-ins include their message underneath. Slack and Teams don't allow changing the sender, so there the GitHub name is in the text instead.
 
 ## v0.7.0
@@ -43,7 +53,7 @@ Windows users: nothing changes for you in this update.
 - v0.2.0: installs Git for you, requires GitHub sign-in.
 
 ## Download
-- **PartLock-v0.7.1.zip**: unzip anywhere and run `PartLock.exe`, or
+- **PartLock-v0.8.0.zip**: unzip anywhere and run `PartLock.exe`, or
 - **PartLock.exe**: the app on its own.
 
 ## Requirements
